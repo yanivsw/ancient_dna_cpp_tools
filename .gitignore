@@ -1,0 +1,38 @@
+# Compiled binaries
+analyzeBAM
+filterBAM
+deamBAM
+
+# Object files
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+
+# Compiled output
+/build/
+/bin/
+
+# Temporary files
+*.swp
+*~
+*.tmp
+.DS_Store
+
+# IDE specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# BAM related files
+*.bam
+*.bai
+*.sam
+*.cram
+
+# Output files
+read_length_distribution.*
+summary_stats.*
+substitution_patterns.*
