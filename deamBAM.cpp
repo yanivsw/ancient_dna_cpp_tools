@@ -146,7 +146,7 @@ void process_chunk(
             reference_ends += reconstructed_reference[i];
         }
 
-        for (int i = reconstructed_alignment.size() - END_LENGTH; i < reconstructed_alignment.size(); i++)
+        for (size_t i = reconstructed_alignment.size() - END_LENGTH; i < reconstructed_alignment.size(); i++)
         {
             alignment_ends += reconstructed_alignment[i];
             reference_ends += reconstructed_reference[i];
@@ -165,7 +165,7 @@ void process_chunk(
             deam_3 = true;
         }
 
-        for (int i = 0; i < reference_ends.size(); i++)
+        for (size_t i = 0; i < reference_ends.size(); i++)
         {
             increment_subst_pattern(subst_patterns[read_length][i][chunk_num], reference_ends[i], alignment_ends[i]);
             if (deam_5)
@@ -218,7 +218,7 @@ void update_subst_patterns(
 }
 
 void update_subst_patterns_threads(
-    uint64_t num_threads,
+    int num_threads,
     std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_total,
     const std::map<int, std::vector<std::vector<substitution_patterns_t>>>& patterns)
 {

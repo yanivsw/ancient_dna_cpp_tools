@@ -1,6 +1,6 @@
 CXX = g++
 CXXFLAGS = -Wall -Wextra -std=c++17 -O3
-LDFLAGS = -lm -lhts -lm -lpthread -llzma -lz -lbz2
+LDFLAGS = -lm -lhts -lpthread -llzma -lz -lbz2
 INCLUDES = -I/r1/people/bioinf/src/htslib-1.4/htslib
 LIBS = -L/r1/people/bioinf/src/htslib-1.4/htslib
 
@@ -36,7 +36,7 @@ filterBAM: filterBAM.cpp
 deamBAM: deamBAM.cpp
 
 .cpp.o:
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $<  -o $@
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f *.o *~ $(MAIN1) $(MAIN2) $(MAIN3)
+	rm -f *.o
