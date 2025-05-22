@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <iomanip>
+#include <set>
 
 #include "bam_processing.h"
 
@@ -51,63 +52,98 @@ struct substitution_patterns_t
 };
 
 void increment_subst_pattern(
-    substitution_patterns_t& pattern,
+    substitution_patterns_t &pattern,
     char ref_base,
     char aln_base)
 {
     if (ref_base == 'A')
     {
-        if (aln_base == 'A') pattern.AA++;
-        else if (aln_base == 'C') pattern.AC++;
-        else if (aln_base == 'G') pattern.AG++;
-        else if (aln_base == 'T') pattern.AT++;
-        else if (aln_base == 'N') pattern.AN++;
+        if (aln_base == 'A')
+            pattern.AA++;
+        else if (aln_base == 'C')
+            pattern.AC++;
+        else if (aln_base == 'G')
+            pattern.AG++;
+        else if (aln_base == 'T')
+            pattern.AT++;
+        else if (aln_base == 'N')
+            pattern.AN++;
     }
-    else if (ref_base == 'C') 
+    else if (ref_base == 'C')
     {
-        if (aln_base == 'A') pattern.CA++;
-        else if (aln_base == 'C') pattern.CC++;
-        else if (aln_base == 'G') pattern.CG++;
-        else if (aln_base == 'T') pattern.CT++;
-        else if (aln_base == 'N') pattern.CN++;
+        if (aln_base == 'A')
+            pattern.CA++;
+        else if (aln_base == 'C')
+            pattern.CC++;
+        else if (aln_base == 'G')
+            pattern.CG++;
+        else if (aln_base == 'T')
+            pattern.CT++;
+        else if (aln_base == 'N')
+            pattern.CN++;
     }
-    else if (ref_base == 'G') 
+    else if (ref_base == 'G')
     {
-        if (aln_base == 'A') pattern.GA++;
-        else if (aln_base == 'C') pattern.GC++;
-        else if (aln_base == 'G') pattern.GG++;
-        else if (aln_base == 'T') pattern.GT++;
-        else if (aln_base == 'N') pattern.GN++;
+        if (aln_base == 'A')
+            pattern.GA++;
+        else if (aln_base == 'C')
+            pattern.GC++;
+        else if (aln_base == 'G')
+            pattern.GG++;
+        else if (aln_base == 'T')
+            pattern.GT++;
+        else if (aln_base == 'N')
+            pattern.GN++;
     }
     else if (ref_base == 'T')
     {
-        if (aln_base == 'A') pattern.TA++;
-        else if (aln_base == 'C') pattern.TC++;
-        else if (aln_base == 'G') pattern.TG++;
-        else if (aln_base == 'T') pattern.TT++;
-        else if (aln_base == 'N') pattern.TN++;
+        if (aln_base == 'A')
+            pattern.TA++;
+        else if (aln_base == 'C')
+            pattern.TC++;
+        else if (aln_base == 'G')
+            pattern.TG++;
+        else if (aln_base == 'T')
+            pattern.TT++;
+        else if (aln_base == 'N')
+            pattern.TN++;
     }
 }
 
 void process_chunk(
     int chunk_num,
+    int min_read_length,
+    int max_read_length,
     std::string bam_file_location,
     int tid,
     int start,
     int end,
-    std::map<int, std::vector<std::vector<substitution_patterns_t>>>& subst_patterns,
-    std::map<int, std::vector<std::vector<substitution_patterns_t>>>& subst_patterns_deam_5,
-    std::map<int, std::vector<std::vector<substitution_patterns_t>>>& subst_patterns_deam_3,
-    std::vector<std::vector<int>>& read_length_distribution_per_thread)
+    std::map<int, std::vector<std::vector<substitution_patterns_t>>> &subst_patterns,
+    std::map<int, std::vector<std::vector<substitution_patterns_t>>> &subst_patterns_deam_5,
+    std::map<int, std::vector<std::vector<substitution_patterns_t>>> &subst_patterns_deam_3,
+    std::vector<std::map<int, int>> &read_length_distribution_per_thread)
 {
     bam_file_config_t bam_config = {};
     bam_constructor(bam_file_location, &bam_config);
-    hts_itr_t* iter = sam_itr_queryi(bam_config.index, tid, start, end);
+    hts_itr_t *iter = sam_itr_queryi(bam_config.index, tid, start, end);
 
-    bam1_t* alignment = bam_init1();
+    bam1_t *alignment = bam_init1();
     while (sam_itr_next(bam_config.bam_file, iter, alignment) >= 0)
     {
         int read_length = alignment->core.l_qseq;
+
+        if (read_length < min_read_length || read_length > max_read_length)
+        {
+            continue;
+        }
+        if (alignment->core.flag & BAM_FUNMAP)
+        {
+            continue;
+        }
+        if (alignment->core.flag & BAM_FPAIRED)
+        {
+            continue;
+        }
 
         read_length_distribution_per_thread[chunk_num][read_length]++;
 
@@ -183,10 +219,10 @@ void process_chunk(
 }
 
 void update_subst_patterns(
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_total,
-    const std::map<int, std::vector<substitution_patterns_t>>& patterns)
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
+    const std::map<int, std::vector<substitution_patterns_t>> &patterns)
 {
-    for (const auto& [read_length, pattern_vectors] : patterns)
+    for (const auto &[read_length, pattern_vectors] : patterns)
     {
         for (int i = 0; i < END_LENGTH * 2; i++)
         {
@@ -219,10 +255,10 @@ void update_subst_patterns(
 
 void update_subst_patterns_threads(
     int num_threads,
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_total,
-    const std::map<int, std::vector<std::vector<substitution_patterns_t>>>& patterns)
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
+    const std::map<int, std::vector<std::vector<substitution_patterns_t>>> &patterns)
 {
-    for (const auto& [read_length, pattern_vectors] : patterns)
+    for (const auto &[read_length, pattern_vectors] : patterns)
     {
         for (int i = 0; i < num_threads; i++)
         {
@@ -262,10 +298,10 @@ bool get_substitution_patterns_for_chr(
     const int max_len,
     const std::string bam_file_location,
     const std::string chr,
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_total,
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_deam_5_total,
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_deam_3_total,
-    std::map<std::string, std::vector<int>>& read_length_distribution_per_chromosome)
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_deam_5_total,
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_deam_3_total,
+    std::map<std::string, std::map<int, int>> &read_length_distribution_per_chromosome)
 {
     std::map<int, std::vector<std::vector<substitution_patterns_t>>> subst_patterns;
     std::map<int, std::vector<std::vector<substitution_patterns_t>>> subst_patterns_deam_5;
@@ -277,8 +313,8 @@ bool get_substitution_patterns_for_chr(
         subst_patterns_deam_3[i] = std::vector<std::vector<substitution_patterns_t>>(END_LENGTH * 2, std::vector<substitution_patterns_t>(num_threads));
     }
 
-    // Create a read length distribution vector for each thread
-    std::vector<std::vector<int>> read_length_distribution_per_thread(num_threads, std::vector<int>(max_len, 0));
+    // Create a read length distribution map for each thread
+    std::vector<std::map<int, int>> read_length_distribution_per_thread(num_threads);
 
     std::pair<int, int> tid_chunk_size = check_bam(bam_file_location, chr, num_threads);
     if (tid_chunk_size.first < 0)
@@ -298,11 +334,12 @@ bool get_substitution_patterns_for_chr(
         int start = i * chunk_size;
         int end = start + chunk_size;
 
-        // process_chunk(i, bam_file_location, tid, start, end, subst_patterns, subst_patterns_deam_5, subst_patterns_deam_3);
-        threads.push_back(std::thread(process_chunk, i, bam_file_location, tid, start, end, std::ref(subst_patterns), std::ref(subst_patterns_deam_5), std::ref(subst_patterns_deam_3), std::ref(read_length_distribution_per_thread)));
+        threads.push_back(std::thread(process_chunk, i, min_len, max_len, bam_file_location, tid, start, end,
+                                      std::ref(subst_patterns), std::ref(subst_patterns_deam_5),
+                                      std::ref(subst_patterns_deam_3), std::ref(read_length_distribution_per_thread)));
     }
 
-    for (auto& thread : threads)
+    for (auto &thread : threads)
     {
         thread.join();
     }
@@ -310,9 +347,12 @@ bool get_substitution_patterns_for_chr(
     // Combine the read length distribution from all threads
     for (int i = 0; i < num_threads; i++)
     {
-        for (int j = 0; j < max_len; j++)
+        for (const auto &[length, count] : read_length_distribution_per_thread[i])
         {
-            read_length_distribution_per_chromosome[chr][j] += read_length_distribution_per_thread[i][j];
+            if (length >= min_len && length <= max_len)
+            {
+                read_length_distribution_per_chromosome[chr][length] += count;
+            }
         }
     }
 
@@ -328,10 +368,9 @@ void write_ct_stats(
     std::string output_file_name,
     const int min_len,
     const int max_len,
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_total,
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_deam_5_total,
-    std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_deam_3_total
-)
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_deam_5_total,
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_deam_3_total)
 {
     std::ofstream outfile(output_file_name);
 
@@ -377,10 +416,10 @@ void write_ct_stats(
 
         auto cond_ci_3 = binomial_confidence_interval(cond_subst_ct_3, cond_subst_c_3);
         auto cond_ci_3_str = binomial_ci_string(cond_ci_3);
-    
+
         auto cond_ci_5 = binomial_confidence_interval(cond_subst_ct_5, cond_subst_c_5);
         auto cond_ci_5_str = binomial_ci_string(cond_ci_5);
-    
+
         auto ci_3 = binomial_confidence_interval(subst_ct_3, subst_c_3);
         auto ci_3_str = binomial_ci_string(ci_3);
 
@@ -421,10 +460,9 @@ void write_ct_stats(
 void write_subst_patterns(
     const std::string input_bam_name,
     const std::string out_folder,
-    const std::map<int, std::vector<substitution_patterns_t>>& subst_patterns_total
-)
+    const std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total)
 {
-    for (const auto& [read_length, patterns] : subst_patterns_total)
+    for (const auto &[read_length, patterns] : subst_patterns_total)
     {
         // Check if all patterns are zero
         bool all_zero = true;
@@ -466,12 +504,12 @@ void write_subst_patterns(
 }
 
 void write_read_length_dist(
+    const int min_len,
     const int max_len,
     const std::string input_bam_name,
     const std::string out_folder,
-    std::vector<std::string>& chromosomes,
-    std::map<std::string, std::vector<int>>& read_length_distribution_per_chromosome
-)
+    std::vector<std::string> &chromosomes,
+    std::map<std::string, std::map<int, int>> &read_length_distribution_per_chromosome)
 {
     std::string read_length_distribution_file_name = out_folder + "read_length_distribution." + input_bam_name + ".txt";
     std::ofstream read_length_distribution_file(read_length_distribution_file_name);
@@ -481,18 +519,9 @@ void write_read_length_dist(
 
     // Only include chromosomes with at least one read
     std::vector<std::string> nonzero_chromosomes;
-    for (const auto& chr : chromosomes)
+    for (const auto &chr : chromosomes)
     {
-        bool has_reads = false;
-        for (int i = 0; i < max_len; i++)
-        {
-            if (read_length_distribution_per_chromosome[chr][i] > 0)
-            {
-                has_reads = true;
-                break;
-            }
-        }
-        if (has_reads)
+        if (!read_length_distribution_per_chromosome[chr].empty())
         {
             nonzero_chromosomes.push_back(chr);
             read_length_distribution_file << "\t" << chr;
@@ -500,17 +529,31 @@ void write_read_length_dist(
     }
     read_length_distribution_file << "\n";
 
-    for (int i = 0; i < max_len; i++)
+    // Collect all unique read lengths across all chromosomes
+    std::set<int> all_read_lengths;
+    for (const auto &chr : nonzero_chromosomes)
+    {
+        for (const auto &[length, count] : read_length_distribution_per_chromosome[chr])
+        {
+            if (length >= min_len && length <= max_len)
+            {
+                all_read_lengths.insert(length);
+            }
+        }
+    }
+
+    // Write read lengths in order
+    for (int length : all_read_lengths)
     {
         int total = 0;
-        for (const auto& chr : nonzero_chromosomes)
+        for (const auto &chr : nonzero_chromosomes)
         {
-            total += read_length_distribution_per_chromosome[chr][i];
+            total += read_length_distribution_per_chromosome[chr][length];
         }
-        read_length_distribution_file << i << "\t" << total;
-        for (const auto& chr : nonzero_chromosomes)
+        read_length_distribution_file << length << "\t" << total;
+        for (const auto &chr : nonzero_chromosomes)
         {
-            read_length_distribution_file << "\t" << read_length_distribution_per_chromosome[chr][i];
+            read_length_distribution_file << "\t" << read_length_distribution_per_chromosome[chr][length];
         }
         read_length_distribution_file << "\n";
     }
@@ -579,10 +622,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    std::map<std::string, std::vector<int>> read_length_distribution_per_chromosome;
-    for (const auto& chr : chromosomes) {
-        read_length_distribution_per_chromosome[chr] = std::vector<int>(max_len, 0);
-    }
+    std::map<std::string, std::map<int, int>> read_length_distribution_per_chromosome;
 
     std::map<int, std::vector<substitution_patterns_t>> subst_patterns_total;
     std::map<int, std::vector<substitution_patterns_t>> subst_patterns_deam_5_total;
@@ -594,7 +634,7 @@ int main(int argc, char *argv[])
         subst_patterns_deam_3_total[i] = std::vector<substitution_patterns_t>(END_LENGTH * 2);
     }
 
-    for (const std::string& chr : chromosomes)
+    for (const std::string &chr : chromosomes)
     {
         std::cout << chr << "\n";
 
@@ -612,7 +652,7 @@ int main(int argc, char *argv[])
         {
             return 1;
         }
-        
+
         update_subst_patterns(subst_patterns_total, subst_patterns);
         update_subst_patterns(subst_patterns_deam_5_total, subst_patterns_deam_5);
         update_subst_patterns(subst_patterns_deam_3_total, subst_patterns_deam_3);
@@ -626,7 +666,7 @@ int main(int argc, char *argv[])
 
     write_ct_stats(output_file_name, min_len, max_len, subst_patterns_total, subst_patterns_deam_5_total, subst_patterns_deam_3_total);
     write_subst_patterns(input_bam_name, out_folder, subst_patterns_total);
-    write_read_length_dist(max_len, input_bam_name, out_folder, chromosomes, read_length_distribution_per_chromosome);
+    write_read_length_dist(min_len, max_len, input_bam_name, out_folder, chromosomes, read_length_distribution_per_chromosome);
 
     return 0;
 }
