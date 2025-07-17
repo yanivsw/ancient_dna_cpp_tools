@@ -19,12 +19,33 @@ This toolkit includes four specialized tools:
 - HTSlib (1.4 or newer)
 - Required libraries: libz, libbz2, liblzma, libpthread
 
+### Project Structure
+
+```
+ancient_dna_cpp_tools/
+├── src/           # Source files (.cpp)
+├── include/       # Header files (.h)
+├── obj/           # Object files (generated during build)
+├── Makefile       # Build configuration
+└── README.md      # Documentation
+```
+
 ### Building from source
 
 ```bash
 git clone [repository-url]
 cd ancient_dna_cpp_tools
 make
+```
+
+The build system will automatically:
+- Create the `obj/` directory for object files
+- Compile source files from `src/` using headers from `include/`
+- Generate executables in the root directory
+
+To clean the build:
+```bash
+make clean
 ```
 
 ## Usage
