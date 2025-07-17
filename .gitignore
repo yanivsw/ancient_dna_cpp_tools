@@ -3,6 +3,7 @@
 analyzeBAM
 filterBAM
 deamBAM
+splitBAM
 analyzeVCF
 
 *.o

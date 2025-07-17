@@ -4,12 +4,13 @@ A collection of high-performance C++ tools for analyzing and processing ancient 
 
 ## Tools
 
-This toolkit includes four specialized tools:
+This toolkit includes five specialized tools:
 
 - **analyzeBAM**: Analyze BAM files to generate comprehensive statistics on alignments with filtering options
 - **filterBAM**: Filter BAM files based on deamination patterns (C→T substitutions)
 - **deamBAM**: Analyze damage patterns in ancient DNA, particularly terminal substitution frequencies
 - **analyzeVCF**: Analyze VCF files to generate statistics on non-reference alleles
+- **splitBAM**: Split BAM files into multiple chunks for parallel processing
 
 ## Installation
 
@@ -98,6 +99,20 @@ Options:
 - `-max_len <num>`: Maximum read length (default: 300)
 - `-help`: Show help message
 
+### splitBAM
+
+Split a BAM file into multiple chunks containing roughly equal numbers of reads for parallel processing.
+
+```bash
+./splitBAM <input_bam> <output_prefix> <num_chunks> [num_threads]
+```
+
+Parameters:
+- `input_bam`: Path to the input BAM file
+- `output_prefix`: Prefix for the output BAM files
+- `num_chunks`: Number of chunks to split the BAM file into
+- `num_threads`: Number of threads to use for writing (default: 4)
+
 ### analyzeVCF
 
 Analyze VCF files to generate statistics on non-reference alleles across chromosomes.
@@ -135,6 +150,10 @@ Options:
 - `substitution_patterns_{read_length}.{bam_name}.txt`: Detailed substitution patterns by read length
 - `read_length_distribution.{bam_name}.txt`: Read length distribution
 
+### splitBAM
+
+- `{output_prefix}.0.bam`, `{output_prefix}.1.bam`, ...: Split BAM files containing roughly equal numbers of reads
+
 ### analyzeVCF
 
 - `non_ref_results.txt`: Comprehensive statistics including heterozygosity, allele frequencies, transition/transversion ratios, and genotype quality metrics per chromosome
@@ -162,4 +181,9 @@ Analyze damage patterns using 16 threads:
 Analyze VCF files for sample NA12878 with hg38 reference:
 ```bash
 ./analyzeVCF -sample NA12878 -vcf_pattern /path/to/sample.{chr}.vcf.gz -filter_pattern /path/to/filter.{chr}.bed -reference hg38 -out_folder results/
+```
+
+Split a BAM file into 10 chunks using 8 threads:
+```bash
+./splitBAM sample.bam output/sample_chunk 10 8
 ```

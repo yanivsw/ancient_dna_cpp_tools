@@ -65,6 +65,27 @@ void bam_destructor(bam_file_config_t* bam_config)
     }
 }
 
+bool bam_index_exists(const std::string &bam_file)
+{
+    std::string index_file = bam_file + ".bai";
+    std::ifstream file(index_file);
+    return file.good();
+}
+
+int create_bam_index(const std::string &bam_file)
+{
+    std::cout << "Creating BAM index for: " << bam_file << std::endl;
+
+    if (sam_index_build(bam_file.c_str(), 0) != 0)
+    {
+        std::cerr << "Failed to create BAM index for: " << bam_file << std::endl;
+        return 1;
+    }
+
+    std::cout << "BAM index created successfully." << std::endl;
+    return 0;
+}
+
 std::pair<int, int> check_bam(
     std::string bam_file_location,
     std::string chr,
