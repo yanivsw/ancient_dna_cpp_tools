@@ -12,80 +12,14 @@
 
 #include "bed_processing.h"
 #include "bam_processing.h"
+#include "duplicate_handler.h"
 #include "utils.h"
+#include "types.h"
 
-#define VERSION_NUMBER 0.6
+#define VERSION_NUMBER 0.7
 
 #define ALN_BUFFER_SIZE 1000000
 #define READ_LEN_DIST_SIZE 512
-
-enum filter_stage_t
-{
-    DIST_RAW = 0,
-    DIST_MERGED,
-    DIST_FILTERED,
-    DIST_FILTERED_LEN,
-    DIST_FILTERED_LEN_MAPPED,
-    DIST_FILTERED_LEN_MAPPED_QUAL,
-    DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET
-};
-
-struct summary_stats_struct
-{
-    uint64_t raw_alignments;
-    uint64_t merged_alignments;
-    uint64_t filtered_alignments;
-    uint64_t filtered_len_alignments;
-    uint64_t filtered_len_mapped_alignments;
-    uint64_t filtered_len_mapped_qual_alignments;
-    uint64_t filtered_len_mapped_qual_target_alignments;
-
-    std::vector<std::vector<int>> length_distribution_matrix;
-
-    summary_stats_struct(size_t length)
-    {
-        raw_alignments = 0;
-        merged_alignments = 0;
-        filtered_alignments = 0;
-        filtered_len_alignments = 0;
-        filtered_len_mapped_alignments = 0;
-        filtered_len_mapped_qual_alignments = 0;
-        filtered_len_mapped_qual_target_alignments = 0;
-
-        initialize_vector(length);
-    }
-
-    void initialize_vector(size_t length)
-    {
-        length_distribution_matrix = std::vector<std::vector<int>>(length, std::vector<int>(DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET + 1, 0));
-    }
-};
-
-struct duplication_stats_struct
-{
-    uint64_t uniq;
-    uint64_t total;
-    uint64_t single;
-    std::vector<uint64_t> length_distribution_uniq;
-    std::vector<uint64_t> length_distribution_single;
-    std::vector<uint64_t> length_distribution_total;
-
-    duplication_stats_struct(size_t length)
-    {
-        uniq = 0;
-        total = 0;
-        single = 0;
-
-        initialize_vector(length);
-    }
-
-    void initialize_vector(size_t length)
-    {
-        length_distribution_uniq = std::vector<uint64_t>(length, 0);
-        length_distribution_single = std::vector<uint64_t>(length, 0);
-        length_distribution_total = std::vector<uint64_t>(length, 0);
-    }
-};
 
 std::unordered_set<std::string> off_genome_chromosomes = {
     "phiX", "NC_007605", "hs37d5",
@@ -98,21 +32,24 @@ std::unordered_set<std::string> off_genome_chromosomes = {
     "GL000214.1", "GL000221.1", "GL000209.1", "GL000218.1", "GL000220.1", "GL000213.1",
     "GL000211.1", "GL000199.1", "GL000217.1", "GL000216.1", "GL000215.1", "GL000205.1",
     "GL000219.1", "GL000224.1", "GL000223.1", "GL000195.1", "GL000212.1", "GL000222.1",
-    "GL000200.1", "GL000193.1", "GL000194.1", "GL000225.1", "GL000192.1"};
+    "GL000200.1", "GL000193.1", "GL000194.1", "GL000225.1", "GL000192.1" };
 
 void write_length_dist_file(
-    const std::string &len_dist_file_name,
+    const std::string& len_dist_file_name,
     bool is_target_file,
-    const summary_stats_struct &summary_stats)
+    const summary_stats_struct& summary_stats,
+    const duplication_stats_struct& dup_stats,
+    bool remove_dups = false)
 {
     std::ofstream len_dist_file(len_dist_file_name, std::ios::app);
     for (size_t j = 0; j < summary_stats.length_distribution_matrix.size(); j++)
     {
-        const auto &row = summary_stats.length_distribution_matrix[j];
+        const auto& row = summary_stats.length_distribution_matrix[j];
         len_dist_file << j << "\t";
         for (size_t i = 0; i < DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET; i++)
         {
             len_dist_file << row[i] << "\t";
+
             if (i == DIST_FILTERED_LEN_MAPPED_QUAL)
             {
                 if (row[DIST_FILTERED_LEN] > 0)
@@ -127,6 +64,19 @@ void write_length_dist_file(
                 {
                     len_dist_file << "\t" << row[i + 1];
                 }
+                if (remove_dups)
+                {
+                    if (dup_stats.length_distribution_uniq[j] > 0)
+                    {
+                        len_dist_file << "\t" << dup_stats.length_distribution_uniq[j]
+                            << "\t" << (static_cast<double>(dup_stats.length_distribution_total[j]) / dup_stats.length_distribution_uniq[j])
+                            << "\t" << dup_stats.length_distribution_single[j];
+                    }
+                    else
+                    {
+                        len_dist_file << "\tNA\tNA\tNA";
+                    }
+                }
                 len_dist_file << "\n";
             }
         }
@@ -135,19 +85,21 @@ void write_length_dist_file(
 }
 
 void append_summary_stats_to_file(
-    const std::string &input_bam_name,
-    const std::string &summary_stats_file_name,
-    const summary_stats_struct &summary_stats,
-    bool is_target_file)
+    const std::string& input_bam_name,
+    const std::string& summary_stats_file_name,
+    const summary_stats_struct& summary_stats,
+    const duplication_stats_struct& dup_stats,
+    bool is_target_file,
+    bool remove_dups = false)
 {
     std::ofstream summary_stats_file(summary_stats_file_name, std::ios::app);
     summary_stats_file << input_bam_name << "\t"
-                       << summary_stats.raw_alignments << "\t"
-                       << summary_stats.merged_alignments << "\t"
-                       << summary_stats.filtered_alignments << "\t"
-                       << summary_stats.filtered_len_alignments << "\t"
-                       << summary_stats.filtered_len_mapped_alignments << "\t"
-                       << summary_stats.filtered_len_mapped_qual_alignments << "\t";
+        << summary_stats.raw_alignments << "\t"
+        << summary_stats.merged_alignments << "\t"
+        << summary_stats.filtered_alignments << "\t"
+        << summary_stats.filtered_len_alignments << "\t"
+        << summary_stats.filtered_len_mapped_alignments << "\t"
+        << summary_stats.filtered_len_mapped_qual_alignments << "\t";
 
     if (summary_stats.filtered_len_alignments > 0)
     {
@@ -162,143 +114,33 @@ void append_summary_stats_to_file(
     {
         summary_stats_file << "\t" << summary_stats.filtered_len_mapped_qual_target_alignments;
     }
+
+    if (remove_dups)
+    {
+        summary_stats_file << "\t" << dup_stats.uniq << "\t"
+            << (static_cast<double>(dup_stats.total) / dup_stats.uniq) << "\t"
+            << dup_stats.single;
+    }
+
     summary_stats_file << "\n";
     summary_stats_file.close();
-}
-
-int check_dups(
-    std::string bam_file,
-    duplication_stats_struct &dup_stats)
-{
-    bam_file_config_t bam_config = {};
-    bam_constructor(bam_file, &bam_config, "r");
-
-    bam1_t *alignment = bam_init1();
-    while (sam_read1(bam_config.bam_file, bam_config.header, alignment) >= 0)
-    {
-        uint8_t *xp_ptr = bam_aux_get(alignment, "XP");
-        if (xp_ptr)
-        {
-            auto xp_flag = bam_aux2i(xp_ptr);
-            dup_stats.total += xp_flag;
-            dup_stats.length_distribution_total[alignment->core.l_qseq] += xp_flag;
-        }
-        else
-        {
-            dup_stats.single++;
-            dup_stats.total++;
-
-            dup_stats.length_distribution_total[alignment->core.l_qseq]++;
-            dup_stats.length_distribution_single[alignment->core.l_qseq]++;
-        }
-
-        dup_stats.length_distribution_uniq[alignment->core.l_qseq]++;
-        dup_stats.uniq++;
-    }
-
-    bam_destructor(&bam_config);
-    bam_destroy1(alignment);
-    return 0;
-}
-
-void update_summary_stats_for_dups(
-    const std::string &in_name,
-    const std::string &out_name,
-    const std::string &input_bam_name,
-    const duplication_stats_struct &dup_stats)
-{
-    std::ifstream in(in_name);
-    std::ofstream out(out_name, std::ofstream::trunc);
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if ((line.find("#file") != std::string::npos) && (line.find("unique") == std::string::npos))
-        {
-            out << line << "\tunique\taverage_dups\tsingletons\n";
-        }
-        else if ((line.find(input_bam_name) != std::string::npos) && (count_tabs(line) <= 8))
-        {
-            out << line << "\t" << dup_stats.uniq << "\t"
-                << (static_cast<double>(dup_stats.total) / dup_stats.uniq) << "\t"
-                << dup_stats.single << "\n";
-        }
-        else
-        {
-            out << line << "\n";
-        }
-    }
-}
-
-void handle_deduped_bam(
-    int32_t min_len,
-    int32_t min_map_qual,
-    const std::string& output_file_location,
-    const std::string& input_bam_name,
-    const std::string& summary_stats_file_name,
-    const std::string& len_dist_file_name)
-{
-    std::string bam_file_deduped = replace_substring(output_file_location, 
-        ".L" + std::to_string(min_len) + "MQ" + std::to_string(min_map_qual), 
-        ".uniq.L" + std::to_string(min_len) + "MQ" + std::to_string(min_map_qual));
-
-    duplication_stats_struct dup_stats(READ_LEN_DIST_SIZE);
-    check_dups(bam_file_deduped, dup_stats);
-
-    // Update summary stats files
-    update_summary_stats_for_dups(summary_stats_file_name, "temp.txt", input_bam_name, dup_stats);
-    std::rename("temp.txt", summary_stats_file_name.c_str());
-
-    std::string summary_stats_file_name_2 = replace_substring(summary_stats_file_name, "summary_stats", "summary_stats." + input_bam_name);
-    update_summary_stats_for_dups(summary_stats_file_name_2, "temp.txt", input_bam_name, dup_stats);
-    std::rename("temp.txt", summary_stats_file_name_2.c_str());
-
-    // Update length distribution file
-    std::ifstream len_dist_file_in(len_dist_file_name);
-    std::ofstream len_dist_file_out("temp.txt", std::ofstream::trunc);
-    std::string line;
-    int idx = 0;
-    while (std::getline(len_dist_file_in, line))
-    {
-        if ((line.find("Length") != std::string::npos) &&
-            (line.find("unique") == std::string::npos))
-        {
-            len_dist_file_out << line << "\tunique\taverage_dups\tsingletons\n";
-        }
-        else
-        {
-            if (dup_stats.length_distribution_uniq[idx] > 0)
-            {
-                len_dist_file_out << line << "\t" << dup_stats.length_distribution_uniq[idx]
-                << "\t" << (static_cast<double>(dup_stats.length_distribution_total[idx]) / dup_stats.length_distribution_uniq[idx])
-                << "\t" << dup_stats.length_distribution_single[idx] << "\n";
-            }
-            else
-            {
-                len_dist_file_out << line << "\tNA\tNA\tNA\n";
-            }
-            idx++;
-        }
-    }
-    len_dist_file_out.close();
-    len_dist_file_in.close();
-    std::rename("temp.txt", len_dist_file_name.c_str());
 }
 
 void print_help()
 {
     std::cout << "Usage: analyzeBAM [options] <BAM files>\n"
-              << "Options:\n"
-              << "  -out_folder <path>       Specify the output folder, otherwise files will be written to the current folder\n"
-              << "  -min_len <length>        Specify the minimum alignment length [default 35]\n"
-              << "  -min_map_qual <quality>  Specify the minimum mapping quality [default 0]\n"
-              << "  -targetfile <path>       Specify the target file path. ***NB*** This expects a bed file (i.e. tab separated, 0-based)\n"
-              << "  -paired                  Do not disregard paired reads\n"
-              << "  -check_dups              Generate duplication stats for post bam-rmdup BAM files. All other options should be the same as the ones used to generate the pre bam-rmdup summary statistics and BAM files. \n"
-              << "  -count_f                 Ignore filter (QC failed) flag\n"
-              << "  -help                    Display this help message\n";
+        << "Options:\n"
+        << "  -out_folder <path>          Specify the output folder, otherwise files will be written to the current folder\n"
+        << "  -min_len <length>           Specify the minimum alignment length [default 35]\n"
+        << "  -min_map_qual <quality>     Specify the minimum mapping quality [default 0]\n"
+        << "  -targetfile <path>          Specify the target file path. ***NB*** This expects a bed file (i.e. tab separated, 0-based)\n"
+        << "  -paired                     Do not disregard paired reads\n"
+        << "  -count_f                    Ignore filter (QC failed) flag\n"
+        << "  -remove_dups                Remove duplicate reads\n"
+        << "  -help                       Display this help message\n";
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     int32_t min_len = 35;
     int32_t min_map_qual = 0;
@@ -307,16 +149,15 @@ int main(int argc, char *argv[])
     std::string target_file_name = "";
     bool is_target_file = false;
     bool paired = false;
-    bool check_dups = false;
     bool count_f = false;
     std::string min_len_str;
     std::string min_map_qual_str;
-    bed_file_t bed_hash;
+    bed_file_t bed_region_map;
     std::string out_folder = "";
 
-    std::cout << "analyzeBAM.cpp v" << VERSION_NUMBER << " - " << get_date_time() << std::endl;
+    bool remove_dups = false;
 
-    // Save the command line arguments to a string
+    std::cout << "analyzeBAM.cpp v" << VERSION_NUMBER << " - " << get_date_time() << std::endl;
     std::ostringstream command_line;
     for (int i = 0; i < argc; i++)
     {
@@ -358,9 +199,9 @@ int main(int argc, char *argv[])
         {
             bam_files.push_back(argv[i]);
         }
-        if (std::string(argv[i]) == "-check_dups")
+        if (std::string(argv[i]) == "-remove_dups")
         {
-            check_dups = true;
+            remove_dups = true;
         }
         if (std::string(argv[i]) == "-count_f")
         {
@@ -379,73 +220,74 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    std::string summary_stats_file_name = "summary_stats" +
-                                          (is_target_file ? ".ontarget_" + target_file_name : "") +
-                                          ".L" + min_len_str + "MQ" + min_map_qual_str + ".txt";
+    std::string summary_stats_file_name = out_folder + "summary_stats" +
+        (is_target_file ? ".ontarget_" + target_file_name : "") +
+        (remove_dups ? ".uniq" : "") +
+        ".L" + min_len_str + "MQ" + min_map_qual_str + ".txt";
 
-    if (!check_dups)
+    std::ofstream summary_stats_file(summary_stats_file_name);
+    summary_stats_file << "#file\traw\tmerged\tfilter_passed\tL" << min_len_str
+        << "\tmappedL" << min_len_str
+        << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
+        << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str;
+    if (is_target_file)
     {
-        std::ofstream summary_stats_file(summary_stats_file_name);
-        summary_stats_file << "#file\traw\tmerged\tfilter_passed\tL" << min_len_str
-                           << "\tmappedL" << min_len_str
-                           << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
-                           << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str;
-        if (is_target_file)
-        {
-            summary_stats_file << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
-        }
-        summary_stats_file << "\n";
+        summary_stats_file << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
     }
+    if (remove_dups)
+    {
+        summary_stats_file << "\tunique\taverage_dups\tsingletons";
+    }
+    summary_stats_file << "\n";
+    summary_stats_file.close();
 
     // Read target file to an unordered_map if it exists
-    if ((is_target_file) && (check_dups == false))
+    if (is_target_file)
     {
-        read_bed_file(target_file_path, bed_hash);
+        read_bed_file(target_file_path, bed_region_map);
     }
 
     // Loop over bam files
-    for (const auto &bam_file : bam_files)
+    for (const auto& bam_file : bam_files)
     {
         // Extract the file name without the extension and path
         std::string input_bam_name;
         input_bam_name = extract_file_name(bam_file);
 
         // Output file name
-        std::string suffix = (std::string(is_target_file ? ".ontarget" : "") + ".L" + min_len_str + "MQ" + min_map_qual_str);
+        std::string suffix = std::string(is_target_file ? ".ontarget" : "") + std::string(remove_dups ? ".uniq" : "") + ".L" + min_len_str + "MQ" + min_map_qual_str;
         std::string output_file_location = out_folder + input_bam_name + suffix + ".bam";
 
-        std::string target_suffix = (is_target_file ? ".ontarget_" + target_file_name : "") + ".L" + min_len_str + "MQ" + min_map_qual_str;
-        std::string summary_stats_file_name_2 = "summary_stats." + input_bam_name + target_suffix + ".txt";
-        std::string len_dist_file_name = "read_length_distribution." + input_bam_name + target_suffix + ".tsv";
+        // Summary stats and length distribution file names
+        std::string target_suffix = std::string(is_target_file ? ".ontarget_" + target_file_name : "") + std::string(remove_dups ? ".uniq" : "") + ".L" + min_len_str + "MQ" + min_map_qual_str;
+        std::string summary_stats_file_name_2 = out_folder + "summary_stats." + input_bam_name + target_suffix + ".txt";
+        std::string len_dist_file_name = out_folder + "read_length_distribution." + input_bam_name + target_suffix + ".tsv";
 
-        if (!check_dups)
+        std::ofstream summary_stats_file_2(summary_stats_file_name_2);
+        summary_stats_file_2 << "#file\traw\tmerged\tfilter_passed\tL" << min_len_str
+            << "\tmappedL" << min_len_str
+            << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
+            << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str
+            << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
+        if (remove_dups)
         {
-            std::ofstream summary_stats_file_2(summary_stats_file_name_2);
-            summary_stats_file_2 << "#file\traw\tmerged\tfilter_passed\tL" << min_len_str
-                                 << "\tmappedL" << min_len_str
-                                 << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
-                                 << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str
-                                 << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str << "\n";
-
-            std::ofstream len_dist_file(len_dist_file_name);
-            len_dist_file << "Length\traw\tmerged\tfilter_passed\tL" << min_len_str
-                          << "\tmappedL" << min_len_str
-                          << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
-                          << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str
-                          << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str << "\n";
+            summary_stats_file_2 << "\tunique\taverage_dups\tsingletons";
         }
-        else
+        summary_stats_file_2 << "\n";
+        summary_stats_file_2.close();
+
+        std::ofstream len_dist_file(len_dist_file_name);
+        len_dist_file << "Length\traw\tmerged\tfilter_passed\tL" << min_len_str
+            << "\tmappedL" << min_len_str
+            << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
+            << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str
+            << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
+        if (remove_dups)
         {
-            handle_deduped_bam(min_len, min_map_qual, output_file_location, input_bam_name, summary_stats_file_name, len_dist_file_name);
-            continue;
+            len_dist_file << "\tunique\taverage_dups\tsingletons";
         }
-
-        summary_stats_struct summary_stats(READ_LEN_DIST_SIZE);
-
-        uint64_t counter = 0;
-        uint64_t qc_fail_reads = 0;
-        uint64_t unmapped_reads = 0;
-        uint64_t off_genome_reads = 0;
+        len_dist_file << "\n";
+        len_dist_file.close();
 
         std::cout << "\nProcessing " << bam_file << "\n";
 
@@ -473,15 +315,27 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        uint64_t bed_hash_ptr = 0;
-        int target_end = 0;
+        summary_stats_struct summary_stats(READ_LEN_DIST_SIZE);
+        duplication_stats_struct dup_stats(READ_LEN_DIST_SIZE);
+
+        uint64_t counter = 0;
+        uint64_t qc_fail_reads = 0;
+        uint64_t unmapped_reads = 0;
+        uint64_t off_genome_reads = 0;
+
+        uint64_t bed_region_ptr = 0;
+        uint32_t target_end = 0;
         bool on_target = false;
-        std::string last_seen_chr = "";
+        int32_t current_tid = -1;
+        int32_t current_position = -1;
+        std::string current_chromosome = "";
+
+        std::vector<bam1_t*> alignment_buffer;
+        std::vector<bam1_t*> deduped_alignment_buffer;
 
         // bam flags: "qdfs21RrUuPp"
         // Read each alignment
-        std::vector<bam1_t *> alignment_buffer;
-        bam1_t *alignment = bam_init1();
+        bam1_t* alignment = bam_init1();
         while (sam_read1(input_bam_config.bam_file, input_bam_config.header, alignment) >= 0)
         {
             on_target = false;
@@ -490,6 +344,43 @@ int main(int argc, char *argv[])
             {
                 std::cout << "\r" << counter << " alignments processed";
                 std::cout.flush();
+            }
+
+            // If this is a new chromosome, update current chromosome and reset target region pointer
+            // If removing duplicates, process the buffered alignments for the previous chromosome
+            if (current_tid != alignment->core.tid)
+            {
+                current_chromosome = chromosomes[alignment->core.tid];
+
+                if (remove_dups)
+                {
+                    if (!alignment_buffer.empty())
+                    {
+                        remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
+                        if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
+                        {
+                            std::cerr << "Failed to write alignment buffer" << std::endl;
+                            return 1;
+                        }
+                    }
+                }
+
+                if (is_target_file)
+                {
+                    if (bed_region_map[current_chromosome].size() > 0)
+                    {
+                        bed_region_ptr = 0;
+                        target_end = bed_region_map[current_chromosome][0].end;
+                    }
+                    else if (current_chromosome == "MT" || current_chromosome == "chrM")
+                    {
+                        // Skip processing for mitochondria if not in the target file
+                        continue;
+                    }
+                }
+
+                current_tid = alignment->core.tid;
+                current_position = -1; // Reset position when chromosome changes
             }
 
             // Skip if the alignment is the second read in a pair and we are not doing paired read processing
@@ -518,7 +409,7 @@ int main(int argc, char *argv[])
             summary_stats.filtered_alignments++;
             summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED]++;
 
-            // Skip if alignment length <= min_len
+            // Skip if alignment length < min_len
             if (alignment->core.l_qseq < min_len)
             {
                 continue;
@@ -534,8 +425,7 @@ int main(int argc, char *argv[])
             }
 
             // Skip if alignment is mapped to a contig in the off_genome_chromosomes set
-            std::string chromosome = chromosomes[alignment->core.tid];
-            if (off_genome_chromosomes.count(chromosome) > 0)
+            if (off_genome_chromosomes.count(current_chromosome) > 0)
             {
                 off_genome_reads++;
                 continue;
@@ -543,7 +433,7 @@ int main(int argc, char *argv[])
             summary_stats.filtered_len_mapped_alignments++;
             summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED]++;
 
-            // Skip if the mapping quality <= min_map_qual
+            // Skip if the mapping quality < min_map_qual
             if (alignment->core.qual < min_map_qual)
             {
                 continue;
@@ -551,98 +441,109 @@ int main(int argc, char *argv[])
             summary_stats.filtered_len_mapped_qual_alignments++;
             summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL]++;
 
-            // If we have a target file
+            // Check if the alignment is on target
             if (is_target_file)
             {
-                // Check if we have not seen this chromosome before (we are assuming the BAM file is sorted by chromosome)
-                if (last_seen_chr != chromosome)
-                {
-                    if (bed_hash[chromosome].size() > 0)
-                    {
-                        bed_hash_ptr = 0;
-                        target_end = bed_hash[chromosome][0].end;
-                        last_seen_chr = chromosome;
-                    }
-                    else if (chromosome == "MT" || chromosome == "chrM") // Handle mitochondria explicitly
-                    {
-                        // Skip processing for mitochondria if not in the target file
-                        continue;
-                    }
-                }
-
                 int aln_len = get_alignment_length(alignment);
                 int aln_start = alignment->core.pos;
                 int aln_end = aln_start + aln_len;
 
                 // Increment the target region pointer until we find one that could overlap with the alignment
-                while ((aln_start > target_end) && (bed_hash_ptr < bed_hash[chromosome].size()))
+                while ((aln_start > static_cast<int32_t>(target_end)) && (bed_region_ptr < bed_region_map[current_chromosome].size()))
                 {
-                    bed_hash_ptr++;
-                    target_end = bed_hash[chromosome][bed_hash_ptr].end;
+                    bed_region_ptr++;
+                    target_end = bed_region_map[current_chromosome][bed_region_ptr].end;
                 }
 
-                // Check for overlap between the alignment and the target region
-                for (size_t i = bed_hash_ptr; i < bed_hash[chromosome].size(); i++)
+                // Check if the alignment overlaps with any target region
+                for (size_t i = bed_region_ptr; i < bed_region_map[current_chromosome].size(); i++)
                 {
-                    int region_start = bed_hash[chromosome][i].start;
-                    int region_end = bed_hash[chromosome][i].end;
+                    int bed_region_start = bed_region_map[current_chromosome][i].start;
+                    int bed_region_end = bed_region_map[current_chromosome][i].end;
 
                     // The alignment is on target
-                    if ((aln_end > region_start) && (aln_start < region_end))
+                    if ((aln_end > bed_region_start) && (aln_start < bed_region_end))
                     {
                         on_target = true;
+
+                        summary_stats.filtered_len_mapped_qual_target_alignments++;
+                        summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
                         break;
                     }
 
                     // The alignment doesn't overlap with any target regions
-                    if (region_start > aln_end)
+                    if (bed_region_start > aln_end)
                     {
                         break;
                     }
                 }
+            }
 
-                if (on_target)
+            // Write the alignment buffer to the output BAM file if it is full
+            if ((current_position != -1) && (alignment->core.pos > current_position) && (alignment_buffer.size() >= ALN_BUFFER_SIZE))
+            {
+                if (remove_dups)
                 {
-                    summary_stats.filtered_len_mapped_qual_target_alignments++;
-                    summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
+                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
+                    if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
+                    {
+                        std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
+                        bam_destructor(&input_bam_config);
+                        bam_destructor(&output_bam_config);
+                        return 1;
+                    }
+                }
+                else
+                {
+                    if (write_alignment_buffer_to_bam(&output_bam_config, alignment_buffer) != 0)
+                    {
+                        std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
+                        bam_destructor(&input_bam_config);
+                        bam_destructor(&output_bam_config);
+                        return 1;
+                    }
                 }
             }
 
-            // Buffer the alignment before writing
+            current_position = alignment->core.pos;
+
+            // Buffer the alignment for writing
             if ((is_target_file && on_target) || !is_target_file)
             {
-                bam1_t *new_alignment = bam_init1();
+                bam1_t* new_alignment = bam_init1();
                 bam_copy1(new_alignment, alignment);
                 alignment_buffer.push_back(new_alignment);
             }
+        }
 
-            // Write the alignment buffer to the output BAM
-            if (alignment_buffer.size() >= ALN_BUFFER_SIZE)
+        // Write any remaining buffered alignments to the output BAM file
+        if (remove_dups)
+        {
+            remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
+            if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
             {
-                if (write_alignment_buffer_to_bam(&output_bam_config, alignment_buffer) != 0)
-                {
-                    std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
-                    bam_destructor(&input_bam_config);
-                    bam_destructor(&output_bam_config);
-                    return 1;
-                }
+                std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
+                bam_destructor(&input_bam_config);
+                bam_destructor(&output_bam_config);
+                return 1;
+            }
+        }
+        else
+        {
+            if (write_alignment_buffer_to_bam(&output_bam_config, alignment_buffer) != 0)
+            {
+                std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
+                bam_destructor(&input_bam_config);
+                bam_destructor(&output_bam_config);
+                return 1;
             }
         }
 
-        // Write any remaining alignments in the buffer
-        if (write_alignment_buffer_to_bam(&output_bam_config, alignment_buffer) != 0)
-        {
-            std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
-            bam_destructor(&input_bam_config);
-            bam_destructor(&output_bam_config);
-            return 1;
-        }
-
         // Write summary stats
-        write_length_dist_file(len_dist_file_name, is_target_file, summary_stats);
+        write_length_dist_file(len_dist_file_name, is_target_file, summary_stats, dup_stats, remove_dups);
 
-        append_summary_stats_to_file(input_bam_name, summary_stats_file_name, summary_stats, is_target_file);
-        append_summary_stats_to_file(input_bam_name, summary_stats_file_name_2, summary_stats, is_target_file);
+        append_summary_stats_to_file(input_bam_name, summary_stats_file_name, summary_stats, dup_stats, is_target_file, remove_dups);
+        append_summary_stats_to_file(input_bam_name, summary_stats_file_name_2, summary_stats, dup_stats, is_target_file, remove_dups);
 
         // Clean up
         bam_destructor(&input_bam_config);

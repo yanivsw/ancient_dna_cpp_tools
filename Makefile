@@ -15,6 +15,7 @@ filterBAM = filterBAM
 deamBAM = deamBAM
 analyzeVCF = analyzeVCF
 splitBAM = splitBAM
+dedupBAM = dedupBAM
 
 # Source files
 SRCS1 = $(SRCDIR)/analyzeBAM.cpp
@@ -22,6 +23,7 @@ SRCS2 = $(SRCDIR)/filterBAM.cpp
 SRCS3 = $(SRCDIR)/deamBAM.cpp
 SRCS4 = $(SRCDIR)/analyzeVCF.cpp
 SRCS5 = $(SRCDIR)/splitBAM.cpp
+SRCS6 = $(SRCDIR)/dedupBAM.cpp
 
 # Object files
 OBJS1 = $(OBJDIR)/analyzeBAM.o
@@ -29,10 +31,11 @@ OBJS2 = $(OBJDIR)/filterBAM.o
 OBJS3 = $(OBJDIR)/deamBAM.o
 OBJS4 = $(OBJDIR)/analyzeVCF.o
 OBJS5 = $(OBJDIR)/splitBAM.o
+OBJS6 = $(OBJDIR)/dedupBAM.o
 
 .PHONY: all clean
 
-all: $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM)
+all: $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM) $(dedupBAM)
 
 # Create object directory if it doesn't exist
 $(OBJDIR):
@@ -53,10 +56,13 @@ $(analyzeVCF): $(OBJDIR) $(OBJS4)
 $(splitBAM): $(OBJDIR) $(OBJS5)
 	$(CXX) $(CXXFLAGS) -o $(splitBAM) $(OBJS5) $(LIBS) $(LDFLAGS)
 
+$(dedupBAM): $(OBJDIR) $(OBJS6)
+	$(CXX) $(CXXFLAGS) -o $(dedupBAM) $(OBJS6) $(LIBS) $(LDFLAGS)
+
 # Pattern rule for object files
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f $(OBJDIR)/*.o $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM)
+	rm -f $(OBJDIR)/*.o $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM) $(dedupBAM)
 	rmdir $(OBJDIR) 2>/dev/null || true
