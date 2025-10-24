@@ -39,11 +39,12 @@ struct non_ref_stats_t
     float alt_gq_std;
 };
 
-void get_coverage(bcf_hdr_t* header,
-                  bcf1_t* record,
-                  int sample_index,
-                  int chr_index,
-                  std::vector<std::vector<uint64_t>>& coverage_dist)
+void get_coverage(
+    bcf_hdr_t* header,
+    bcf1_t* record,
+    int sample_index,
+    int chr_index,
+    std::vector<std::vector<uint64_t>>& coverage_dist)
 {
     // Get the coverage from the FORMAT field
     int32_t* coverage = nullptr;
@@ -61,10 +62,10 @@ void get_coverage(bcf_hdr_t* header,
     }
 }
 
-float get_gq(bcf_hdr_t* header,
-                bcf1_t* record,
-                int sample_index,
-                int chr_index)
+float get_gq(
+    bcf_hdr_t* header,
+    bcf1_t* record,
+    int sample_index)
 {
     // Get the GQ from the FORMAT field
     float* gq = nullptr;
@@ -90,17 +91,18 @@ bool is_transition(const std::string& base1, const std::string& base2)
            (base1 == "C" && base2 == "T") || (base1 == "T" && base2 == "C");
 }
 
-int get_non_ref_stats(std::string vcf_file,
-                      std::string filter_file,
-                      std::string sample_name,
-                      std::string chr,
-                      int chr_index,
-                      std::vector<non_ref_stats_t>& non_ref_stats,
-                      std::unordered_map<std::string, long>& len_map,
-                      uint64_t het_block_size = 10000)
+int get_non_ref_stats(
+    std::string vcf_file,
+    std::string filter_file,
+    std::string sample_name,
+    std::string chr,
+    int chr_index,
+    std::vector<non_ref_stats_t>& non_ref_stats,
+    std::unordered_map<std::string, long>& len_map,
+    uint64_t het_block_size = 10000)
 {
-    uint64_t het_gq_total = 0;
-    uint64_t alt_gq_total = 0;
+    // uint64_t het_gq_total = 0;
+    // uint64_t alt_gq_total = 0;
 
     non_ref_stats[chr_index].chr = chr;
 
@@ -163,7 +165,7 @@ int get_non_ref_stats(std::string vcf_file,
                 non_ref_stats[chr_index].n_tv++;
             }
 
-            auto gq = get_gq(header, record, sample_index, chr_index);
+            auto gq = get_gq(header, record, sample_index);
             non_ref_stats[chr_index].alt_gq_dist.push_back(gq);
         }
 
@@ -196,7 +198,7 @@ int get_non_ref_stats(std::string vcf_file,
             auto block_index = record->pos / het_block_size;
             non_ref_stats[chr_index].het_dist[block_index]++;
 
-            auto gq = get_gq(header, record, sample_index, chr_index);
+            auto gq = get_gq(header, record, sample_index);
             non_ref_stats[chr_index].het_gq_dist.push_back(gq);
         }
         // If this is heterozygous with non-reference alleles
@@ -207,7 +209,7 @@ int get_non_ref_stats(std::string vcf_file,
             auto block_index = record->pos / het_block_size;
             non_ref_stats[chr_index].het_dist[block_index]++;
 
-            auto gq = get_gq(header, record, sample_index, chr_index);
+            auto gq = get_gq(header, record, sample_index);
             non_ref_stats[chr_index].het_gq_dist.push_back(gq);
         }
 
@@ -218,12 +220,12 @@ int get_non_ref_stats(std::string vcf_file,
         }
     }
 
-    non_ref_stats[chr_index].alt_allele_prop = (float)non_ref_stats[chr_index].alt_count / (non_ref_stats[chr_index].alt_count + non_ref_stats[chr_index].ref_count);
-    non_ref_stats[chr_index].heterozygosity = ( (float)non_ref_stats[chr_index].n_hets / non_ref_stats[chr_index].n_bp ) * 10000;
-    non_ref_stats[chr_index].het_coverage = (float)(non_ref_stats[chr_index].alt_count + non_ref_stats[chr_index].ref_count) / non_ref_stats[chr_index].n_hets_transversions;
-    non_ref_stats[chr_index].ts_tv_ratio = (float)non_ref_stats[chr_index].n_ts / non_ref_stats[chr_index].n_tv;
-    non_ref_stats[chr_index].het_gq_mean = (float)std::accumulate(non_ref_stats[chr_index].het_gq_dist.begin(), non_ref_stats[chr_index].het_gq_dist.end(), 0) / non_ref_stats[chr_index].n_hets;
-    non_ref_stats[chr_index].alt_gq_mean = (float)std::accumulate(non_ref_stats[chr_index].alt_gq_dist.begin(), non_ref_stats[chr_index].alt_gq_dist.end(), 0) / (non_ref_stats[chr_index].n_ts + non_ref_stats[chr_index].n_tv);
+    non_ref_stats[chr_index].alt_allele_prop = (float) non_ref_stats[chr_index].alt_count / (non_ref_stats[chr_index].alt_count + non_ref_stats[chr_index].ref_count);
+    non_ref_stats[chr_index].heterozygosity = ((float) non_ref_stats[chr_index].n_hets / non_ref_stats[chr_index].n_bp) * 10000;
+    non_ref_stats[chr_index].het_coverage = (float) (non_ref_stats[chr_index].alt_count + non_ref_stats[chr_index].ref_count) / non_ref_stats[chr_index].n_hets_transversions;
+    non_ref_stats[chr_index].ts_tv_ratio = (float) non_ref_stats[chr_index].n_ts / non_ref_stats[chr_index].n_tv;
+    non_ref_stats[chr_index].het_gq_mean = (float) std::accumulate(non_ref_stats[chr_index].het_gq_dist.begin(), non_ref_stats[chr_index].het_gq_dist.end(), 0) / non_ref_stats[chr_index].n_hets;
+    non_ref_stats[chr_index].alt_gq_mean = (float) std::accumulate(non_ref_stats[chr_index].alt_gq_dist.begin(), non_ref_stats[chr_index].alt_gq_dist.end(), 0) / (non_ref_stats[chr_index].n_ts + non_ref_stats[chr_index].n_tv);
 
     for (const auto& gq : non_ref_stats[chr_index].het_gq_dist)
     {
@@ -241,6 +243,8 @@ int get_non_ref_stats(std::string vcf_file,
     bcf_destroy(record);
     bcf_hdr_destroy(header);
     bcf_close(vcf);
+
+    return 0;
 }
 
 void print_help()
@@ -259,7 +263,7 @@ void print_help()
     std::cout << "  -output_distributions: Output additional distribution files (het_gq_dist.txt, alt_gq_dist.txt and het_dist_*.tab) for analysis\n";
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     std::string sample_name = "";
     std::string out_folder = "";
@@ -342,7 +346,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    std::vector<std::string> chromosomes = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22"};
+    std::vector<std::string> chromosomes = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22" };
     std::vector<non_ref_stats_t> non_ref_stats(chromosomes.size());
 
     std::unordered_map<std::string, long> len_map;
@@ -363,7 +367,7 @@ int main(int argc, char *argv[])
     std::unordered_map<uint64_t, uint64_t> alt_gq_hist;
 
     std::vector<std::thread> threads;
-    for (int i = 0; i < chromosomes.size(); ++i)
+    for (size_t i = 0; i < chromosomes.size(); ++i)
     {
         auto chr = chromosomes[i];
         std::string vcf_file_temp = vcf_file_pattern;
@@ -422,7 +426,7 @@ int main(int argc, char *argv[])
             }
             het_dist_file.close();
         }
-        
+
         for (const auto& gq : result.het_gq_dist)
         {
             int bin = static_cast<int>(std::floor(gq));
