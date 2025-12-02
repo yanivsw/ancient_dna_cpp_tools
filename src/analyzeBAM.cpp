@@ -13,10 +13,11 @@
 #include "bed_processing.h"
 #include "bam_processing.h"
 #include "duplicate_handler.h"
+#include "pair_handler.h"
 #include "utils.h"
 #include "types.h"
 
-#define VERSION_NUMBER 0.7
+#define VERSION_NUMBER 0.8
 
 #define ALN_BUFFER_SIZE 1000000
 #define READ_LEN_DIST_SIZE 512
@@ -124,6 +125,55 @@ void append_summary_stats_to_file(
 
     summary_stats_file << "\n";
     summary_stats_file.close();
+}
+
+bool check_on_target(
+    bam1_t* alignment,
+    const std::string& current_chromosome,
+    const bed_file_t& bed_region_map,
+    uint64_t& bed_region_ptr,
+    uint32_t& target_end)
+{
+    if (bed_region_map.find(current_chromosome) == bed_region_map.end())
+    {
+        return false;
+    }
+
+    int aln_len = get_alignment_length(alignment);
+    int aln_start = alignment->core.pos;
+    int aln_end = aln_start + aln_len;
+
+    // Increment the target region pointer until we find one that could overlap with the alignment
+    while ((aln_start > static_cast<int32_t>(target_end)) && 
+           (bed_region_ptr < bed_region_map.at(current_chromosome).size()))
+    {
+        bed_region_ptr++;
+        if (bed_region_ptr < bed_region_map.at(current_chromosome).size())
+        {
+            target_end = bed_region_map.at(current_chromosome)[bed_region_ptr].end;
+        }
+    }
+
+    // Check if the alignment overlaps with any target region
+    for (size_t i = bed_region_ptr; i < bed_region_map.at(current_chromosome).size(); i++)
+    {
+        int bed_region_start = bed_region_map.at(current_chromosome)[i].start;
+        int bed_region_end = bed_region_map.at(current_chromosome)[i].end;
+
+        // The alignment is on target
+        if ((aln_end > bed_region_start) && (aln_start < bed_region_end))
+        {
+            return true;
+        }
+
+        // The alignment doesn't overlap with any target regions
+        if (bed_region_start > aln_end)
+        {
+            break;
+        }
+    }
+
+    return false;
 }
 
 void print_help()
@@ -333,6 +383,8 @@ int main(int argc, char* argv[])
         std::vector<bam1_t*> alignment_buffer;
         std::vector<bam1_t*> deduped_alignment_buffer;
 
+        paired_read_tracker_t pair_tracker;
+
         // bam flags: "qdfs21RrUuPp"
         // Read each alignment
         bam1_t* alignment = bam_init1();
@@ -352,16 +404,24 @@ int main(int argc, char* argv[])
             {
                 current_chromosome = chromosomes[alignment->core.tid];
 
-                if (remove_dups)
+                if (remove_dups && !alignment_buffer.empty())
                 {
-                    if (!alignment_buffer.empty())
+                    if (paired)
                     {
-                        remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
-                        if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
-                        {
-                            std::cerr << "Failed to write alignment buffer" << std::endl;
-                            return 1;
-                        }
+                        rescue_failed_mates(alignment_buffer, pair_tracker);
+                    }
+
+                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
+
+                    if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
+                    {
+                        std::cerr << "Failed to write alignment buffer" << std::endl;
+                        return 1;
+                    }
+
+                    if (paired)
+                    {
+                        cleanup_pair_tracker(pair_tracker);
                     }
                 }
 
@@ -433,55 +493,17 @@ int main(int argc, char* argv[])
             summary_stats.filtered_len_mapped_alignments++;
             summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED]++;
 
-            // Skip if the mapping quality < min_map_qual
-            if (alignment->core.qual < min_map_qual)
-            {
-                continue;
-            }
-            summary_stats.filtered_len_mapped_qual_alignments++;
-            summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL]++;
+            bool passes_mapq = alignment->core.qual >= min_map_qual;
+            bool is_paired = paired && (alignment->core.flag & BAM_FPAIRED);
 
-            // Check if the alignment is on target
-            if (is_target_file)
-            {
-                int aln_len = get_alignment_length(alignment);
-                int aln_start = alignment->core.pos;
-                int aln_end = aln_start + aln_len;
-
-                // Increment the target region pointer until we find one that could overlap with the alignment
-                while ((aln_start > static_cast<int32_t>(target_end)) && (bed_region_ptr < bed_region_map[current_chromosome].size()))
-                {
-                    bed_region_ptr++;
-                    target_end = bed_region_map[current_chromosome][bed_region_ptr].end;
-                }
-
-                // Check if the alignment overlaps with any target region
-                for (size_t i = bed_region_ptr; i < bed_region_map[current_chromosome].size(); i++)
-                {
-                    int bed_region_start = bed_region_map[current_chromosome][i].start;
-                    int bed_region_end = bed_region_map[current_chromosome][i].end;
-
-                    // The alignment is on target
-                    if ((aln_end > bed_region_start) && (aln_start < bed_region_end))
-                    {
-                        on_target = true;
-
-                        summary_stats.filtered_len_mapped_qual_target_alignments++;
-                        summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
-                        break;
-                    }
-
-                    // The alignment doesn't overlap with any target regions
-                    if (bed_region_start > aln_end)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            // Write the alignment buffer to the output BAM file if it is full
+            // Write the alignment buffer to the output BAM file if it is full or we have moved past the current position
             if ((current_position != -1) && (alignment->core.pos > current_position) && (alignment_buffer.size() >= ALN_BUFFER_SIZE))
             {
+                if (paired)
+                {
+                    rescue_failed_mates(alignment_buffer, pair_tracker);
+                }
+
                 if (remove_dups)
                 {
                     remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
@@ -507,13 +529,73 @@ int main(int argc, char* argv[])
 
             current_position = alignment->core.pos;
 
-            // Buffer the alignment for writing
-            if ((is_target_file && on_target) || !is_target_file)
+            if (is_target_file)
             {
-                bam1_t* new_alignment = bam_init1();
-                bam_copy1(new_alignment, alignment);
-                alignment_buffer.push_back(new_alignment);
+                on_target = check_on_target(alignment, current_chromosome, bed_region_map, 
+                                           bed_region_ptr, target_end);
             }
+            else
+            {
+                on_target = true;  // Consider all reads "on-target" if no target file
+            }
+
+            // Handle paired or unpaired reads
+            if (is_paired)
+            {
+                // Check if this is part of a valid pair
+                if ((alignment->core.flag & BAM_FMUNMAP) ||
+                    (alignment->core.mtid != alignment->core.tid) ||
+                    !(alignment->core.flag & BAM_FPROPER_PAIR))
+                {
+                    continue;
+                }
+
+                bool pair_passed = handle_paired_read(alignment, passes_mapq, 
+                                                      alignment_buffer, pair_tracker,
+                                                      on_target);
+                
+                // Update stats only if this read originally passed (not a rescued mate)
+                if (pair_passed)
+                {
+                    summary_stats.filtered_len_mapped_qual_alignments++;
+                    summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL]++;
+                    
+                    if (on_target && is_target_file)
+                    {
+                        summary_stats.filtered_len_mapped_qual_target_alignments++;
+                        summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
+                    }
+                }
+            }
+            else
+            {
+                // Unpaired read
+                if (!passes_mapq)
+                {
+                    continue;
+                }
+                
+                summary_stats.filtered_len_mapped_qual_alignments++;
+                summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL]++;
+
+                if (on_target)
+                {
+                    if (is_target_file)
+                    {
+                        summary_stats.filtered_len_mapped_qual_target_alignments++;
+                        summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
+                    }
+                    
+                    bam1_t* new_alignment = bam_init1();
+                    bam_copy1(new_alignment, alignment);
+                    alignment_buffer.push_back(new_alignment);
+                }
+            }
+        }
+
+        if (paired)
+        {
+            rescue_failed_mates(alignment_buffer, pair_tracker);
         }
 
         // Write any remaining buffered alignments to the output BAM file

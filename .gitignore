@@ -5,6 +5,7 @@ filterBAM
 deamBAM
 splitBAM
 analyzeVCF
+dedupBAM
 
 *.o
 *.bam

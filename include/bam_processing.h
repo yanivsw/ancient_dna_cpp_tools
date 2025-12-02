@@ -36,7 +36,7 @@ bool bam_constructor(
         return false;
     }
 
-    // Read or write header as appropriate
+    // Read header and index if in read mode
     if (mode[0] == 'r')
     {
         if (!(bam_config->header = sam_hdr_read(bam_config->bam_file)))
@@ -44,10 +44,9 @@ bool bam_constructor(
             std::cerr << "Failed to open BAM file header" << std::endl;
             return false;
         }
-        // Only load index for reading
         if (!(bam_config->index = sam_index_load(bam_config->bam_file, bam_config->bam_file_location.c_str())))
         {
-            std::cerr << "Failed to open index for BAM file: " << bam_config->bam_file_location << std::endl;
+            // std::cerr << "Failed to open index for BAM file: " << bam_config->bam_file_location << std::endl;
             return false;
         }
     }
@@ -83,7 +82,7 @@ int create_bam_index(const std::string& bam_file)
         return 1;
     }
 
-    std::cout << "BAM index created successfully." << std::endl;
+    // std::cout << "BAM index created successfully." << std::endl;
     return 0;
 }
 

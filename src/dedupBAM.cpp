@@ -15,11 +15,12 @@
 #include "bam_processing.h"
 #include "duplicate_handler.h"
 #include "types.h"
+#include "pair_handler.h"
 
-#define ALN_BUFFER_SIZE 1000000
+#define ALN_BUFFER_SIZE 2000000
 
 #define READ_LEN_DIST_SIZE 512
-#define VERSION_NUMBER 0.1
+#define VERSION_NUMBER 0.2
 
 void process_chromosome(
     int tid,
@@ -33,7 +34,8 @@ void process_chromosome(
     duplication_stats_struct& dup_stats,
     std::map<int, bool>& chromosome_ready,
     std::mutex& ready_mutex,
-    std::condition_variable& ready_cv)
+    std::condition_variable& ready_cv,
+    std::string command_line_str)
 {
     bam_file_config_t input_bam_config = {};
     bam_constructor(input_bam_name, &input_bam_config, "r");
@@ -49,22 +51,35 @@ void process_chromosome(
     bam_file_config_t output_bam_config = {};
     bam_constructor(chr_output_bam, &output_bam_config, "wb");
     output_bam_config.header = bam_hdr_dup(input_bam_config.header);
+    
+    // Update header with command line
+    std::string version_str = std::to_string(VERSION_NUMBER);
+    version_str.erase(version_str.find_last_not_of('0') + 1, std::string::npos);
+    append_line_to_bam_header(output_bam_config.header, "@PG\tID:dedupBAM\tVN:" + version_str + "\tCL:" + command_line_str + "\n");
+    
     sam_hdr_write(output_bam_config.bam_file, output_bam_config.header);
 
     std::vector<bam1_t*> alignment_buffer;
     std::vector<bam1_t*> deduped_alignment_buffer;
     int32_t current_position = -1;
 
+    paired_read_tracker_t pair_tracker;
+
     bam1_t* alignment = bam_init1();
     while (sam_itr_next(input_bam_config.bam_file, iter, alignment) >= 0)
     {
-        // Skip reads that don't meet quality/length criteria
-        if ((alignment->core.l_qseq < static_cast<int32_t>(min_length)) ||
-            (alignment->core.qual < min_map_quality) ||
-            (alignment->core.flag & BAM_FMUNMAP) ||
-            ((alignment->core.flag & BAM_FPAIRED) && !(alignment->core.flag & BAM_FPROPER_PAIR)) ||
-            ((alignment->core.flag & BAM_FPAIRED) && (alignment->core.mtid != tid)) ||
-            ((alignment->core.flag & BAM_FQCFAIL) && (ignore_qc_fail == false)))
+        bool passes_basic_filters = 
+            (alignment->core.l_qseq >= static_cast<int32_t>(min_length)) &&
+            !(alignment->core.flag & BAM_FMUNMAP) &&
+            (!(alignment->core.flag & BAM_FPAIRED) || (alignment->core.flag & BAM_FPROPER_PAIR)) &&
+            (!(alignment->core.flag & BAM_FPAIRED) || (alignment->core.mtid == tid)) &&
+            ((alignment->core.flag & BAM_FQCFAIL) == 0 || ignore_qc_fail);
+
+        bool passes_mapq = alignment->core.qual >= min_map_quality;
+        bool is_paired = (alignment->core.flag & BAM_FPAIRED) != 0;
+
+        // Skip reads that don't meet criteria
+        if (!passes_basic_filters)
         {
             continue;
         }
@@ -72,7 +87,12 @@ void process_chromosome(
         // Process buffer when it gets big enough and we've moved past the current position
         if ((current_position != -1) && (alignment->core.pos > current_position) && (alignment_buffer.size() >= ALN_BUFFER_SIZE))
         {
+            // Rescue mates before deduplication
+            rescue_failed_mates(alignment_buffer, pair_tracker);
+
+            // Perform deduplication
             remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
+
             if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
             {
                 std::cerr << "Failed to write alignment buffer for chromosome " << tid << std::endl;
@@ -82,15 +102,32 @@ void process_chromosome(
 
         current_position = alignment->core.pos;
 
-        bam1_t* new_alignment = bam_init1();
-        bam_copy1(new_alignment, alignment);
-        alignment_buffer.push_back(new_alignment);
+        // Handle paired reads with within-buffer mate rescue
+        if (is_paired)
+        {
+            handle_paired_read(alignment, passes_mapq, alignment_buffer, pair_tracker);
+        }
+        else
+        {
+            // Unpaired read - normal filtering
+            if (!passes_mapq)
+            {
+                continue;
+            }
+            
+            bam1_t* new_alignment = bam_init1();
+            bam_copy1(new_alignment, alignment);
+            alignment_buffer.push_back(new_alignment);
+        }
     }
 
     // Process any remaining alignments
     if (!alignment_buffer.empty())
     {
+        rescue_failed_mates(alignment_buffer, pair_tracker);
+
         remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
+
         if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
         {
             std::cerr << "Failed to write alignment buffer for chromosome " << tid << std::endl;
@@ -110,8 +147,6 @@ void process_chromosome(
     // Signal that this chromosome is ready for merging
     std::lock_guard<std::mutex> lock(ready_mutex);
     chromosome_ready[tid] = true;
-    // std::cout << "Chromosome " << tid << " ready for merging" << std::endl;
-
     ready_cv.notify_all(); // Notify merger thread
 }
 
@@ -164,7 +199,6 @@ int merge_chromosome_bams(
         bam1_t* aln = bam_init1();
         uint64_t alignment_count = 0;
         std::vector<bam1_t*> alignment_buffer;
-
         while (sam_read1(chr_config.bam_file, chr_config.header, aln) >= 0)
         {
             bam1_t* new_alignment = bam_init1();
@@ -216,6 +250,7 @@ void print_help()
         << "  -ignore_length           Ignore alignment length when identifying duplicates\n"
         << "  -ignore_qc_fail          Ignore QC fail flag when identifying duplicates\n"
         << "  -threads <num>           Specify the number of threads to use [default 4]\n"
+        << "  -keep_chr_bams           Keep chromosome BAM files after processing\n"
         << "  -help                    Display this help message\n";
 }
 
@@ -226,6 +261,7 @@ int main(int argc, char* argv[])
     bool ignore_length = false;
     bool ignore_read_groups = false;
     bool ignore_qc_fail = false;
+    bool keep_chr_bams = false;
     uint32_t min_length = 0;
     uint32_t min_map_quality = 0;
     uint32_t thread_count = 4;
@@ -279,6 +315,10 @@ int main(int argc, char* argv[])
         if (std::string(argv[i]) == "-threads")
         {
             thread_count = std::stoi(argv[i + 1]);
+        }
+        if (std::string(argv[i]) == "-keep_chr_bams")
+        {
+            keep_chr_bams = true;
         }
         if (std::string(argv[i]).find(".bam") != std::string::npos)
         {
@@ -342,7 +382,19 @@ int main(int argc, char* argv[])
     for (int tid = 0; tid < input_bam_config.header->n_targets; ++tid)
     {
         std::string chr_name = input_bam_config.header->target_name[tid];
-        std::string chr_output_bam = out_folder + input_bam_name + ".chr" + chr_name + ".bam";
+        std::string chr_output_bam;
+
+        if (keep_chr_bams)
+        {
+            // Add suffix to chromosome BAM names when keeping them
+            chr_output_bam = out_folder + input_bam_name + "." + chr_name + suffix + ".bam";
+        }
+        else
+        {
+            // Temporary files don't need the suffix
+            chr_output_bam = out_folder + input_bam_name + "." + chr_name + ".bam";
+        }
+
         chr_bam_files[tid] = chr_output_bam;
     }
 
@@ -352,14 +404,22 @@ int main(int argc, char* argv[])
     std::condition_variable ready_cv;
     bool all_processing_complete = false;
 
-    // Start merger thread
-    std::thread merger_thread(merge_chromosome_bams,
-        std::ref(chr_bam_files),
-        std::ref(output_bam_config),
-        std::ref(chromosome_ready),
-        std::ref(ready_mutex),
-        std::ref(ready_cv),
-        std::ref(all_processing_complete));
+    // Start merger thread only if not keeping chromosome BAMs
+    std::thread merger_thread;
+    if (!keep_chr_bams)
+    {
+        merger_thread = std::thread(merge_chromosome_bams,
+            std::ref(chr_bam_files),
+            std::ref(output_bam_config),
+            std::ref(chromosome_ready),
+            std::ref(ready_mutex),
+            std::ref(ready_cv),
+            std::ref(all_processing_complete));
+    }
+    else
+    {
+        std::cout << "Keeping individual chromosome BAM files (no merging)" << std::endl;
+    }
 
     // Process chromosomes in batches based on thread count
     for (int tid = 0; tid < input_bam_config.header->n_targets; tid += thread_count)
@@ -383,7 +443,8 @@ int main(int argc, char* argv[])
                 std::ref(dup_stats[current_tid]),
                 std::ref(chromosome_ready),
                 std::ref(ready_mutex),
-                std::ref(ready_cv));
+                std::ref(ready_cv),
+                command_line_str);
         }
 
         // Clear previous threads
@@ -413,8 +474,11 @@ int main(int argc, char* argv[])
         }
     }
 
-    // // Wait for merger thread to complete
-    merger_thread.join();
+    // Wait for merger thread to complete only if it was started
+    if (!keep_chr_bams && merger_thread.joinable())
+    {
+        merger_thread.join();
+    }
 
     for (const auto& stats : dup_stats)
     {
@@ -424,24 +488,60 @@ int main(int argc, char* argv[])
         dup_stats_total.total += stats.total;
     }
 
-    // Delete temporary chromosome BAM files
-    for (const auto& [tid, file_path] : chr_bam_files)
+    // Only handle chromosome BAM files if we're not keeping them
+    if (!keep_chr_bams)
     {
-        if (std::remove(file_path.c_str()) != 0)
+        // Delete temporary chromosome BAM files
+        for (const auto& [tid, file_path] : chr_bam_files)
         {
-            std::cerr << "Warning: Failed to delete temporary file " << file_path << std::endl;
+            if (std::remove(file_path.c_str()) != 0)
+            {
+                std::cerr << "Warning: Failed to delete temporary file " << file_path << std::endl;
+            }
+        }
+
+        // Generate BAM index for merged output file
+        if (sam_index_build(output_file_location.c_str(), 0) < 0)
+        {
+            std::cerr << "Failed to generate BAM index" << std::endl;
+            return 1;
+        }
+    }
+    else
+    {
+        // Remove the merged output file since we're keeping individual chromosome files
+        std::remove(output_file_location.c_str());
+        
+        // Remove empty chromosome BAM files
+        for (const auto& [tid, file_path] : chr_bam_files)
+        {
+            bam_file_config_t chr_config = {};
+            bam_constructor(file_path, &chr_config, "r");
+            
+            bam1_t* aln = bam_init1();
+            bool is_empty = (sam_read1(chr_config.bam_file, chr_config.header, aln) < 0);
+            
+            bam_destroy1(aln);
+            bam_destructor(&chr_config);
+            
+            if (is_empty)
+            {
+                std::remove(file_path.c_str());
+            }
+            else
+            {
+                // Generate BAM index for non-empty chromosome files
+                if (sam_index_build(file_path.c_str(), 0) < 0)
+                {
+                    std::cerr << "Failed to generate BAM index for " << file_path << std::endl;
+                }
+            }
         }
     }
 
     // Clean up
     bam_destructor(&input_bam_config);
     bam_destructor(&output_bam_config);
-
-    if (sam_index_build(output_file_location.c_str(), 0) < 0)
-    {
-        std::cerr << "Failed to generate BAM index" << std::endl;
-        return 1;
-    }
 
     std::cout << "\nAlignments processed: " << dup_stats_total.total << std::endl;
     std::cout << "Alignments written (deduplicated): " << dup_stats_total.uniq << std::endl;

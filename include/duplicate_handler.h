@@ -16,7 +16,7 @@
 #include "bam_processing.h"
 #include "types.h"
 
-// Global RNG
+// Global RNG for random selection of a representative alignment among duplicates
 std::mt19937 gen(std::random_device{}());
 
 // Set to track which read names should be kept (first seen mates that passed deduplication)
@@ -28,10 +28,9 @@ void group_alignments(
     bool ignore_length = false,
     bool ignore_read_groups = true)
 {
+    // First group by read name to find pairs
     std::unordered_map<std::string_view, std::vector<bam1_t*>> read_pairs;
     read_pairs.reserve(alignment_buffer.size());
-
-    // First pass: group by read name using string_view
     for (const auto& aln : alignment_buffer)
     {
         std::string_view qname(bam_get_qname(aln));
@@ -39,6 +38,7 @@ void group_alignments(
     }
 
     alignment_groups.reserve(read_pairs.size());
+
     std::unordered_map<std::string, uint32_t> rg_hash_cache;
     uint32_t next_rg_hash = 1;
     for (const auto& [qname, reads] : read_pairs)
@@ -64,6 +64,7 @@ void group_alignments(
             }
         }
 
+        // Handle paired reads where both mates are present
         if (reads.size() == 2 && (reads[0]->core.flag & BAM_FPAIRED) && (reads[1]->core.flag & BAM_FPAIRED))
         {
             bam1_t* left_read = (reads[0]->core.pos <= reads[1]->core.pos) ? reads[0] : reads[1];
@@ -95,13 +96,14 @@ void group_alignments(
             alignment_groups[key1].push_back(left_read);
             alignment_groups[key2].push_back(right_read);
         }
+        // Handle paired reads where only one mate is present
         else if ((reads.size() == 1) && (reads[0]->core.flag & BAM_FPAIRED))
         {
             bam1_t* aln = reads[0];
 
+            // If this read is the second mate, check if the first mate was retained
             if (retained_read_names.count(bam_get_qname(aln)))
             {
-                // First mate retained - add to group
                 AlignmentGroupKey key = {
                     aln->core.pos,
                     255, // special orientation value for retained second mates
@@ -111,6 +113,7 @@ void group_alignments(
                 };
                 alignment_groups[key].push_back(aln);
             }
+            // If this is the first mate, process normally
             else
             {
                 bool is_reverse = aln->core.flag & BAM_FREVERSE;
@@ -131,9 +134,9 @@ void group_alignments(
                 alignment_groups[key].push_back(aln);
             }
         }
+        // Handle merged reads
         else
         {
-            // Single-end or unpaired read
             bam1_t* aln = reads[0];
 
             uint32_t length = 0;
@@ -143,13 +146,12 @@ void group_alignments(
             }
 
             bool is_reverse = aln->core.flag & BAM_FREVERSE;
-            bool is_paired = aln->core.flag & BAM_FPAIRED;
 
             AlignmentGroupKey key = {
                 aln->core.pos,
                 is_reverse,
                 read_group_hash,
-                is_paired,
+                0,
                 length
             };
 
@@ -163,8 +165,7 @@ void remove_duplicates(
     std::vector<bam1_t*>& deduped_alignment_buffer,
     bool ignore_length = false,
     bool ignore_read_groups = true,
-    duplication_stats_struct* dup_stats = nullptr,
-    std::ofstream* dup_name_out = nullptr)
+    duplication_stats_struct* dup_stats = nullptr)
 {
     std::unordered_map<AlignmentGroupKey, std::vector<bam1_t*>, AlignmentGroupKeyHash> alignment_groups;
     group_alignments(alignment_buffer, alignment_groups, ignore_length, ignore_read_groups);
@@ -185,16 +186,16 @@ void remove_duplicates(
     // Process each group
     for (auto& [key, alignment_group] : sorted_groups)
     {
+        // If the mate position (key.length) is less than the position of the first seen mate
+        // skip because we have not seen the mate yet which means it did not pass filters
         if (key.is_paired && (key.length < static_cast<uint32_t>(key.position)) && (key.orientation != 255))
         {
-            // Invalid pair - skip
             continue;
         }
 
-        // 255 orientation means this is the second mate of a pair - retain these alignments
+        // 255 orientation means this is the second mate of a pair - retain these alignments unconditionally
         if (key.orientation == 255)
         {
-            bool found_retained = false;
             for (auto* aln : alignment_group)
             {
                 if (retained_read_names.count(bam_get_qname(aln)))
@@ -203,29 +204,7 @@ void remove_duplicates(
                     bam_copy1(deduped_alignment, aln);
                     update_xp_tag(deduped_alignment, alignment_group.size());
                     deduped_alignment_buffer.push_back(deduped_alignment);
-
-                    found_retained = true;
                     break;
-                }
-            }
-            if (!found_retained)
-            {
-                bam1_t* best_aln = nullptr;
-                int best_mapq = -1;
-                for (auto* aln : alignment_group)
-                {
-                    if (aln->core.qual > best_mapq)
-                    {
-                        best_mapq = aln->core.qual;
-                        best_aln = aln;
-                    }
-                }
-                if (best_aln)
-                {
-                    bam1_t* deduped_alignment = bam_init1();
-                    bam_copy1(deduped_alignment, best_aln);
-                    update_xp_tag(deduped_alignment, alignment_group.size());
-                    deduped_alignment_buffer.push_back(deduped_alignment);
                 }
             }
         }
@@ -238,11 +217,6 @@ void remove_duplicates(
 
             update_xp_tag(deduped_alignment, 1);
             deduped_alignment_buffer.push_back(deduped_alignment);
-
-            if (dup_name_out)
-            {
-                *dup_name_out << key.position + 1 << "\t" << bam_get_qname(deduped_alignment) << "\n";
-            }
 
             // If this is paired, record its name so we can look for the mate later
             if (aln->core.flag & BAM_FPAIRED)
