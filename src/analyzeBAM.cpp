@@ -17,10 +17,10 @@
 #include "utils.h"
 #include "types.h"
 
-#define VERSION_NUMBER 0.8
+#define VERSION_NUMBER 0.81
 
 #define ALN_BUFFER_SIZE 1000000
-#define READ_LEN_DIST_SIZE 512
+#define READ_LEN_DIST_SIZE 1024
 
 std::unordered_set<std::string> off_genome_chromosomes = {
     "phiX", "NC_007605", "hs37d5",
@@ -198,7 +198,7 @@ int main(int argc, char* argv[])
     std::string target_file_path = "";
     std::string target_file_name = "";
     bool is_target_file = false;
-    bool paired = false;
+    bool handle_pairs = false;
     bool count_f = false;
     std::string min_len_str;
     std::string min_map_qual_str;
@@ -243,7 +243,7 @@ int main(int argc, char* argv[])
         }
         if (std::string(argv[i]) == "-paired")
         {
-            paired = true;
+            handle_pairs = true;
         }
         if (std::string(argv[i]).find(".bam") != std::string::npos)
         {
@@ -317,8 +317,11 @@ int main(int argc, char* argv[])
         summary_stats_file_2 << "#file\traw\tmerged\tfilter_passed\tL" << min_len_str
             << "\tmappedL" << min_len_str
             << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
-            << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str
-            << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
+            << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str;
+        if (is_target_file)
+        {
+            summary_stats_file_2 << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
+        }
         if (remove_dups)
         {
             summary_stats_file_2 << "\tunique\taverage_dups\tsingletons";
@@ -330,8 +333,11 @@ int main(int argc, char* argv[])
         len_dist_file << "Length\traw\tmerged\tfilter_passed\tL" << min_len_str
             << "\tmappedL" << min_len_str
             << "\tmappedL" << min_len_str << "MQ" << min_map_qual_str
-            << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str
-            << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
+            << "\t%mappedL" << min_len_str << "MQ" << min_map_qual_str;
+        if (is_target_file)
+        {
+            len_dist_file << "\ttargetL" << min_len_str << "MQ" << min_map_qual_str;
+        }
         if (remove_dups)
         {
             len_dist_file << "\tunique\taverage_dups\tsingletons";
@@ -378,6 +384,7 @@ int main(int argc, char* argv[])
         bool on_target = false;
         int32_t current_tid = -1;
         int32_t current_position = -1;
+        int32_t effective_length = 0;
         std::string current_chromosome = "";
 
         std::vector<bam1_t*> alignment_buffer;
@@ -400,13 +407,15 @@ int main(int argc, char* argv[])
 
             // If this is a new chromosome, update current chromosome and reset target region pointer
             // If removing duplicates, process the buffered alignments for the previous chromosome
-            if (current_tid != alignment->core.tid)
+            if ((current_tid != alignment->core.tid) &&
+                (alignment->core.tid != -1) &&
+                (alignment->core.tid < static_cast<int32_t>(chromosomes.size())))
             {
                 current_chromosome = chromosomes[alignment->core.tid];
 
                 if (remove_dups && !alignment_buffer.empty())
                 {
-                    if (paired)
+                    if (handle_pairs)
                     {
                         rescue_failed_mates(alignment_buffer, pair_tracker);
                     }
@@ -419,7 +428,7 @@ int main(int argc, char* argv[])
                         return 1;
                     }
 
-                    if (paired)
+                    if (handle_pairs)
                     {
                         cleanup_pair_tracker(pair_tracker);
                     }
@@ -444,21 +453,33 @@ int main(int argc, char* argv[])
             }
 
             // Skip if the alignment is the second read in a pair and we are not doing paired read processing
-            if (((alignment->core.flag & BAM_FREAD2) != 0) && (paired == false))
+            if (((alignment->core.flag & BAM_FREAD2) != 0) && (handle_pairs == false))
             {
                 continue;
             }
-            summary_stats.raw_alignments++;
-            summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_RAW]++;
 
-            // Skip if not merged or not paired
-            if ((((alignment->core.flag & BAM_FREAD1) != 0) && (paired == false)) ||
-                (((alignment->core.flag & BAM_FPAIRED) == 0) && (paired == true)))
+            effective_length = get_effective_length(alignment, READ_LEN_DIST_SIZE);
+
+            // For statistics tracking, only count first read in pair to avoid double counting
+            bool is_paired_read = (alignment->core.flag & BAM_FPAIRED) != 0;
+            bool should_count_stats = !is_paired_read || (alignment->core.flag & BAM_FREAD1);
+            if (should_count_stats)
+            {
+                summary_stats.raw_alignments++;
+                summary_stats.length_distribution_matrix[effective_length][DIST_RAW]++;
+            }
+
+            // When handle_pairs=false: Skip paired reads (only process merged reads)
+            // When handle_pairs=true: Process both paired AND merged reads
+            if (is_paired_read && (handle_pairs == false))
             {
                 continue;
             }
-            summary_stats.merged_alignments++;
-            summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_MERGED]++;
+            if (should_count_stats)
+            {
+                summary_stats.merged_alignments++;
+                summary_stats.length_distribution_matrix[effective_length][DIST_MERGED]++;
+            }
 
             // Skip if the alignment failed quality control
             if (((alignment->core.flag & BAM_FQCFAIL) != 0) && (count_f == false))
@@ -466,16 +487,22 @@ int main(int argc, char* argv[])
                 qc_fail_reads++;
                 continue;
             }
-            summary_stats.filtered_alignments++;
-            summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED]++;
+            if (should_count_stats)
+            {
+                summary_stats.filtered_alignments++;
+                summary_stats.length_distribution_matrix[effective_length][DIST_FILTERED]++;
+            }
 
             // Skip if alignment length < min_len
             if (alignment->core.l_qseq < min_len)
             {
                 continue;
             }
-            summary_stats.filtered_len_alignments++;
-            summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN]++;
+            if (should_count_stats)
+            {
+                summary_stats.filtered_len_alignments++;
+                summary_stats.length_distribution_matrix[effective_length][DIST_FILTERED_LEN]++;
+            }
 
             // Skip if unmapped
             if ((alignment->core.flag & BAM_FUNMAP) != 0)
@@ -483,23 +510,26 @@ int main(int argc, char* argv[])
                 unmapped_reads++;
                 continue;
             }
-
             // Skip if alignment is mapped to a contig in the off_genome_chromosomes set
             if (off_genome_chromosomes.count(current_chromosome) > 0)
             {
                 off_genome_reads++;
                 continue;
             }
-            summary_stats.filtered_len_mapped_alignments++;
-            summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED]++;
+            if (should_count_stats)
+            {
+                summary_stats.filtered_len_mapped_alignments++;
+                summary_stats.length_distribution_matrix[effective_length][DIST_FILTERED_LEN_MAPPED]++;
+            }
 
             bool passes_mapq = alignment->core.qual >= min_map_qual;
-            bool is_paired = paired && (alignment->core.flag & BAM_FPAIRED);
 
             // Write the alignment buffer to the output BAM file if it is full or we have moved past the current position
-            if ((current_position != -1) && (alignment->core.pos > current_position) && (alignment_buffer.size() >= ALN_BUFFER_SIZE))
+            if ((current_position != -1) &&
+                (alignment->core.pos > current_position) &&
+                (alignment_buffer.size() >= ALN_BUFFER_SIZE))
             {
-                if (paired)
+                if (handle_pairs)
                 {
                     rescue_failed_mates(alignment_buffer, pair_tracker);
                 }
@@ -531,16 +561,15 @@ int main(int argc, char* argv[])
 
             if (is_target_file)
             {
-                on_target = check_on_target(alignment, current_chromosome, bed_region_map, 
-                                           bed_region_ptr, target_end);
+                on_target = check_on_target(alignment, current_chromosome, bed_region_map, bed_region_ptr, target_end);
             }
             else
             {
                 on_target = true;  // Consider all reads "on-target" if no target file
             }
 
-            // Handle paired or unpaired reads
-            if (is_paired)
+            // Handle paired read if we are in paired mode
+            if (is_paired_read && handle_pairs)
             {
                 // Check if this is part of a valid pair
                 if ((alignment->core.flag & BAM_FMUNMAP) ||
@@ -550,40 +579,41 @@ int main(int argc, char* argv[])
                     continue;
                 }
 
-                bool pair_passed = handle_paired_read(alignment, passes_mapq, 
-                                                      alignment_buffer, pair_tracker,
-                                                      on_target);
+                bool pair_passed = handle_paired_read(alignment, passes_mapq, alignment_buffer, pair_tracker, on_target);
                 
                 // Update stats only if this read originally passed (not a rescued mate)
-                if (pair_passed)
+                if (pair_passed && should_count_stats)
                 {
                     summary_stats.filtered_len_mapped_qual_alignments++;
-                    summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL]++;
+                    summary_stats.length_distribution_matrix[effective_length][DIST_FILTERED_LEN_MAPPED_QUAL]++;
                     
                     if (on_target && is_target_file)
                     {
                         summary_stats.filtered_len_mapped_qual_target_alignments++;
-                        summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
+                        summary_stats.length_distribution_matrix[effective_length][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
                     }
                 }
             }
+            // Handle merged reads
             else
             {
-                // Unpaired read
                 if (!passes_mapq)
                 {
                     continue;
                 }
                 
-                summary_stats.filtered_len_mapped_qual_alignments++;
-                summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL]++;
+                if (should_count_stats)
+                {
+                    summary_stats.filtered_len_mapped_qual_alignments++;
+                    summary_stats.length_distribution_matrix[effective_length][DIST_FILTERED_LEN_MAPPED_QUAL]++;
+                }
 
                 if (on_target)
                 {
-                    if (is_target_file)
+                    if (is_target_file && should_count_stats)
                     {
                         summary_stats.filtered_len_mapped_qual_target_alignments++;
-                        summary_stats.length_distribution_matrix[alignment->core.l_qseq][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
+                        summary_stats.length_distribution_matrix[effective_length][DIST_FILTERED_LEN_MAPPED_QUAL_ONTARGET]++;
                     }
                     
                     bam1_t* new_alignment = bam_init1();
@@ -593,12 +623,11 @@ int main(int argc, char* argv[])
             }
         }
 
-        if (paired)
+        // Write any remaining buffered alignments to the output BAM file
+        if (handle_pairs)
         {
             rescue_failed_mates(alignment_buffer, pair_tracker);
         }
-
-        // Write any remaining buffered alignments to the output BAM file
         if (remove_dups)
         {
             remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);

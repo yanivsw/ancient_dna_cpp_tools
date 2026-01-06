@@ -613,4 +613,29 @@ void update_read_name(
     aln->core.l_extranul = extranul;
 }
 
+int32_t get_effective_length(
+    bam1_t* aln,
+    int32_t max_len)
+{
+    int32_t effective_length = aln->core.l_qseq;
+    
+    // For proper paired reads, use insert size
+    if ((aln->core.flag & BAM_FPAIRED) &&
+        (aln->core.flag & BAM_FPROPER_PAIR) &&
+        !(aln->core.flag & BAM_FMUNMAP) &&
+        (aln->core.mtid == aln->core.tid) &&
+        (aln->core.isize > 0))
+    {
+        effective_length = abs(aln->core.isize);
+    }
+    
+    // Ensure within bounds
+    if (effective_length >= max_len)
+    {
+        effective_length = max_len - 1;
+    }
+    
+    return effective_length;
+}
+
 #endif // BAM_PROCESSING_H
