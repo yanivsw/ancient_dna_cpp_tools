@@ -17,7 +17,7 @@
 #include "utils.h"
 #include "types.h"
 
-#define VERSION_NUMBER 0.81
+#define VERSION_NUMBER 0.82
 
 #define ALN_BUFFER_SIZE 1000000
 #define READ_LEN_DIST_SIZE 1024
@@ -475,7 +475,7 @@ int main(int argc, char* argv[])
             {
                 continue;
             }
-            if (should_count_stats)
+            if (should_count_stats && !is_paired_read)
             {
                 summary_stats.merged_alignments++;
                 summary_stats.length_distribution_matrix[effective_length][DIST_MERGED]++;

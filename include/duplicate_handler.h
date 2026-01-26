@@ -227,15 +227,18 @@ void remove_duplicates(
 
             if (dup_stats)
             {
-                int32_t effective_length = get_effective_length(aln, dup_stats->length_distribution_total.size());
-
-                dup_stats->single++;
-                dup_stats->total++;
-                dup_stats->uniq++;
-
-                dup_stats->length_distribution_total[effective_length]++;
-                dup_stats->length_distribution_single[effective_length]++;
-                dup_stats->length_distribution_uniq[effective_length]++;
+                bool is_paired = aln->core.flag & BAM_FPAIRED;
+                bool is_r1 = aln->core.flag & BAM_FREAD1;
+                if (!is_paired || is_r1)
+                {
+                    int32_t effective_length = get_effective_length(aln, dup_stats->length_distribution_total.size());
+                    dup_stats->single++;
+                    dup_stats->total++;
+                    dup_stats->uniq++;
+                    dup_stats->length_distribution_total[effective_length]++;
+                    dup_stats->length_distribution_single[effective_length]++;
+                    dup_stats->length_distribution_uniq[effective_length]++;
+                }
             }
         }
         // Multiple alignments in this group - need to select one using the highest minimum base quality
@@ -291,14 +294,19 @@ void remove_duplicates(
             {
                 int32_t selected_effective_length = get_effective_length(selected_alignment, dup_stats->length_distribution_total.size());
 
-                dup_stats->uniq++;
-                dup_stats->length_distribution_uniq[selected_effective_length]++;
-                
-                dup_stats->total += alignment_group.size();
-                for (auto* aln : alignment_group)
+                bool is_paired = selected_alignment->core.flag & BAM_FPAIRED;
+                bool is_r1 = selected_alignment->core.flag & BAM_FREAD1;
+                if (!is_paired || is_r1)
                 {
-                    int32_t effective_length = get_effective_length(aln, dup_stats->length_distribution_total.size());
-                    dup_stats->length_distribution_total[effective_length]++;
+                    dup_stats->uniq++;
+                    dup_stats->length_distribution_uniq[selected_effective_length]++;
+                    
+                    dup_stats->total += alignment_group.size();
+                    for (auto* aln : alignment_group)
+                    {
+                        int32_t effective_length = get_effective_length(aln, dup_stats->length_distribution_total.size());
+                        dup_stats->length_distribution_total[effective_length]++;
+                    }
                 }
             }
         }
