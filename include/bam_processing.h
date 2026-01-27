@@ -617,16 +617,25 @@ int32_t get_effective_length(
     bam1_t* aln,
     int32_t max_len)
 {
-    int32_t effective_length = aln->core.l_qseq;
+    int32_t effective_length;
     
     // For proper paired reads, use insert size
-    if ((aln->core.flag & BAM_FPAIRED) &&
-        (aln->core.flag & BAM_FPROPER_PAIR) &&
-        !(aln->core.flag & BAM_FMUNMAP) &&
-        (aln->core.mtid == aln->core.tid) &&
-        (aln->core.isize > 0))
+    if ((aln->core.flag & BAM_FPAIRED))
     {
-        effective_length = abs(aln->core.isize);
+        if ((aln->core.flag & BAM_FPROPER_PAIR) &&
+            !(aln->core.flag & BAM_FMUNMAP) &&
+            (aln->core.mtid == aln->core.tid))
+        {
+            effective_length = abs(aln->core.isize);
+        }
+        else
+        {
+            effective_length = 0; // Indicate invalid insert size
+        }
+    }
+    else // For unpaired or improper pairs, use alignment length
+    {
+        effective_length = aln->core.l_qseq;
     }
     
     // Ensure within bounds

@@ -17,7 +17,7 @@
 #include "utils.h"
 #include "types.h"
 
-#define VERSION_NUMBER 0.82
+#define VERSION_NUMBER 0.83
 
 #define ALN_BUFFER_SIZE 1000000
 #define READ_LEN_DIST_SIZE 1024

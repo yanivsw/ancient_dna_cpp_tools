@@ -20,7 +20,7 @@
 #define ALN_BUFFER_SIZE 2000000
 
 #define READ_LEN_DIST_SIZE 512
-#define VERSION_NUMBER 0.2
+#define VERSION_NUMBER 0.21
 
 void process_chromosome(
     int tid,
