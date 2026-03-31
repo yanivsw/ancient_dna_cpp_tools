@@ -20,7 +20,21 @@
 #define ALN_BUFFER_SIZE 2000000
 
 #define READ_LEN_DIST_SIZE 512
-#define VERSION_NUMBER 0.21
+#define VERSION_NUMBER 0.22
+
+struct ChromosomeReadyGuard {
+    int tid;
+    std::map<int, bool>& ready;
+    std::mutex& mtx;
+    std::condition_variable& cv;
+    bool& success;
+
+    ~ChromosomeReadyGuard() {
+        std::lock_guard<std::mutex> lock(mtx);
+        ready[tid] = true;  // always signal, even on error
+        cv.notify_all();
+    }
+};
 
 void process_chromosome(
     int tid,
@@ -37,6 +51,9 @@ void process_chromosome(
     std::condition_variable& ready_cv,
     std::string command_line_str)
 {
+    bool success = false;
+    ChromosomeReadyGuard guard{tid, chromosome_ready, ready_mutex, ready_cv, success};
+
     bam_file_config_t input_bam_config = {};
     bam_constructor(input_bam_name, &input_bam_config, "r");
 
@@ -57,7 +74,13 @@ void process_chromosome(
     version_str.erase(version_str.find_last_not_of('0') + 1, std::string::npos);
     append_line_to_bam_header(output_bam_config.header, "@PG\tID:dedupBAM\tVN:" + version_str + "\tCL:" + command_line_str + "\n");
     
-    sam_hdr_write(output_bam_config.bam_file, output_bam_config.header);
+    if (sam_hdr_write(output_bam_config.bam_file, output_bam_config.header) < 0)
+    {
+        std::cerr << "Failed to write BAM header for chromosome " << tid << std::endl;
+        bam_destructor(&input_bam_config);
+        bam_destructor(&output_bam_config);
+        return;
+    }
 
     std::vector<bam1_t*> alignment_buffer;
     std::vector<bam1_t*> deduped_alignment_buffer;
@@ -137,17 +160,8 @@ void process_chromosome(
     bam_destroy1(alignment);
     hts_itr_destroy(iter);
 
-    if (hts_close(output_bam_config.bam_file) < 0)
-    {
-        std::cerr << "Error closing chromosome BAM file" << std::endl;
-    }
-
-    bam_hdr_destroy(output_bam_config.header);
-
-    // Signal that this chromosome is ready for merging
-    std::lock_guard<std::mutex> lock(ready_mutex);
-    chromosome_ready[tid] = true;
-    ready_cv.notify_all(); // Notify merger thread
+    bam_destructor(&input_bam_config);
+    bam_destructor(&output_bam_config);
 }
 
 int merge_chromosome_bams(
@@ -235,6 +249,7 @@ int merge_chromosome_bams(
         bam_destructor(&chr_config);
     }
 
+    bam_destructor(&output_bam_config);
     // std::cout << "Merge thread complete" << std::endl;
     return 0;
 }
@@ -247,7 +262,6 @@ void print_help()
         << "  -min_len <length>        Specify the minimum alignment length [default 0]\n"
         << "  -min_map_qual <quality>  Specify the minimum mapping quality [default 0]\n"
         << "  -ignore_read_groups      Ignore read group information when identifying duplicates\n"
-        << "  -ignore_length           Ignore alignment length when identifying duplicates\n"
         << "  -ignore_qc_fail          Ignore QC fail flag when identifying duplicates\n"
         << "  -threads <num>           Specify the number of threads to use [default 4]\n"
         << "  -keep_chr_bams           Keep chromosome BAM files after processing\n"
@@ -258,8 +272,8 @@ int main(int argc, char* argv[])
 {
     std::cout << "dedupBAM.cpp v" << VERSION_NUMBER << " - " << get_date_time() << std::endl;
 
-    bool ignore_length = false;
     bool ignore_read_groups = false;
+    bool ignore_length = false;
     bool ignore_qc_fail = false;
     bool keep_chr_bams = false;
     uint32_t min_length = 0;
@@ -272,7 +286,6 @@ int main(int argc, char* argv[])
     std::string min_len_str = std::to_string(min_length);
     std::string min_map_qual_str = std::to_string(min_map_quality);
 
-    // Save the command line arguments to a string
     std::ostringstream command_line;
     for (int i = 0; i < argc; i++)
     {
@@ -303,10 +316,6 @@ int main(int argc, char* argv[])
         if (std::string(argv[i]) == "-ignore_read_groups")
         {
             ignore_read_groups = true;
-        }
-        if (std::string(argv[i]) == "-ignore_length")
-        {
-            ignore_length = true;
         }
         if (std::string(argv[i]) == "-ignore_qc_fail")
         {
@@ -341,13 +350,27 @@ int main(int argc, char* argv[])
         std::cout << "Deduplicating " << bam_file << std::endl;
     }
 
+    bam_file_config_t input_bam_config = {};
+    bam_constructor(bam_file, &input_bam_config, "r");
+
+    if (input_bam_config.index == nullptr)
+    {
+        std::cerr << "Error: No index found for " << input_bam_name << std::endl;
+        bam_destructor(&input_bam_config);
+        return 1;
+    }
+
+    if (!is_bam_sorted(input_bam_config))
+    {
+        std::cerr << "Error: Input BAM file is not sorted by coordinate" << std::endl;
+        bam_destructor(&input_bam_config);
+        return 1;
+    }
+
     input_bam_name = extract_file_name(bam_file);
 
     std::string suffix = std::string(".uniq.L") + min_len_str + "MQ" + min_map_qual_str;
     std::string output_file_location = out_folder + input_bam_name + suffix + ".bam";
-
-    bam_file_config_t input_bam_config = {};
-    bam_constructor(bam_file, &input_bam_config, "r");
 
     bam_file_config_t output_bam_config = {};
     bam_constructor(output_file_location, &output_bam_config, "wb");
@@ -541,7 +564,6 @@ int main(int argc, char* argv[])
 
     // Clean up
     bam_destructor(&input_bam_config);
-    bam_destructor(&output_bam_config);
 
     std::cout << "\nAlignments processed: " << dup_stats_total.total << std::endl;
     std::cout << "Alignments written (deduplicated): " << dup_stats_total.uniq << std::endl;

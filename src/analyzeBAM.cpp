@@ -17,7 +17,7 @@
 #include "utils.h"
 #include "types.h"
 
-#define VERSION_NUMBER 0.83
+#define VERSION_NUMBER 0.84
 
 #define ALN_BUFFER_SIZE 1000000
 #define READ_LEN_DIST_SIZE 1024
@@ -187,6 +187,7 @@ void print_help()
         << "  -paired                     Do not disregard paired reads\n"
         << "  -count_f                    Ignore filter (QC failed) flag\n"
         << "  -remove_dups                Remove duplicate reads\n"
+        << "  -ignore_read_groups         Ignore read group information when identifying duplicates\n"
         << "  -help                       Display this help message\n";
 }
 
@@ -200,6 +201,7 @@ int main(int argc, char* argv[])
     bool is_target_file = false;
     bool handle_pairs = false;
     bool count_f = false;
+    bool ignore_read_groups = false;
     std::string min_len_str;
     std::string min_map_qual_str;
     bed_file_t bed_region_map;
@@ -253,6 +255,10 @@ int main(int argc, char* argv[])
         {
             remove_dups = true;
         }
+        if (std::string(argv[i]) == "-ignore_read_groups")
+        {
+            ignore_read_groups = true;
+        }
         if (std::string(argv[i]) == "-count_f")
         {
             count_f = true;
@@ -268,6 +274,11 @@ int main(int argc, char* argv[])
     {
         std::cerr << "No BAM files provided" << std::endl;
         return 1;
+    }
+
+    if (ignore_read_groups && !remove_dups)
+    {
+        std::cerr << "Warning: -ignore_read_groups has no effect without -remove_dups" << std::endl;
     }
 
     std::string summary_stats_file_name = out_folder + "summary_stats" +
@@ -387,13 +398,14 @@ int main(int argc, char* argv[])
         int32_t effective_length = 0;
         std::string current_chromosome = "";
 
+        bool ignore_length = false;
+
         std::vector<bam1_t*> alignment_buffer;
         std::vector<bam1_t*> deduped_alignment_buffer;
 
         paired_read_tracker_t pair_tracker;
 
         // bam flags: "qdfs21RrUuPp"
-        // Read each alignment
         bam1_t* alignment = bam_init1();
         while (sam_read1(input_bam_config.bam_file, input_bam_config.header, alignment) >= 0)
         {
@@ -420,7 +432,7 @@ int main(int argc, char* argv[])
                         rescue_failed_mates(alignment_buffer, pair_tracker);
                     }
 
-                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
+                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
 
                     if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
                     {
@@ -536,7 +548,7 @@ int main(int argc, char* argv[])
 
                 if (remove_dups)
                 {
-                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
+                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
                     if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
                     {
                         std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
@@ -630,7 +642,7 @@ int main(int argc, char* argv[])
         }
         if (remove_dups)
         {
-            remove_duplicates(alignment_buffer, deduped_alignment_buffer, false, true, &dup_stats);
+            remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
             if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
             {
                 std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
