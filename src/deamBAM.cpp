@@ -16,7 +16,7 @@
 #include "bam_processing.h"
 
 #define END_LENGTH 21
-#define VERSION_NUMBER 0.1
+#define VERSION_NUMBER 0.2
 
 struct substitution_patterns_t
 {
