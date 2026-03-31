@@ -10,6 +10,8 @@
 #include <string>
 #include <iomanip>
 #include <set>
+#include <mutex>
+#include <queue>
 
 #include "bam_processing.h"
 
@@ -107,6 +109,80 @@ void increment_subst_pattern(
             pattern.TT++;
         else if (aln_base == 'N')
             pattern.TN++;
+    }
+}
+
+void update_subst_patterns(
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
+    const std::map<int, std::vector<substitution_patterns_t>> &patterns)
+{
+    for (const auto &[read_length, pattern_vectors] : patterns)
+    {
+        for (int i = 0; i < END_LENGTH * 2; i++)
+        {
+            subst_patterns_total[read_length][i].AA += pattern_vectors[i].AA;
+            subst_patterns_total[read_length][i].AC += pattern_vectors[i].AC;
+            subst_patterns_total[read_length][i].AG += pattern_vectors[i].AG;
+            subst_patterns_total[read_length][i].AT += pattern_vectors[i].AT;
+            subst_patterns_total[read_length][i].AN += pattern_vectors[i].AN;
+
+            subst_patterns_total[read_length][i].GG += pattern_vectors[i].GG;
+            subst_patterns_total[read_length][i].GA += pattern_vectors[i].GA;
+            subst_patterns_total[read_length][i].GC += pattern_vectors[i].GC;
+            subst_patterns_total[read_length][i].GT += pattern_vectors[i].GT;
+            subst_patterns_total[read_length][i].GN += pattern_vectors[i].GN;
+
+            subst_patterns_total[read_length][i].CC += pattern_vectors[i].CC;
+            subst_patterns_total[read_length][i].CA += pattern_vectors[i].CA;
+            subst_patterns_total[read_length][i].CG += pattern_vectors[i].CG;
+            subst_patterns_total[read_length][i].CT += pattern_vectors[i].CT;
+            subst_patterns_total[read_length][i].CN += pattern_vectors[i].CN;
+
+            subst_patterns_total[read_length][i].TT += pattern_vectors[i].TT;
+            subst_patterns_total[read_length][i].TA += pattern_vectors[i].TA;
+            subst_patterns_total[read_length][i].TC += pattern_vectors[i].TC;
+            subst_patterns_total[read_length][i].TG += pattern_vectors[i].TG;
+            subst_patterns_total[read_length][i].TN += pattern_vectors[i].TN;
+        }
+    }
+}
+
+void update_subst_patterns_threads(
+    int num_threads,
+    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
+    const std::map<int, std::vector<std::vector<substitution_patterns_t>>> &patterns)
+{
+    for (const auto &[read_length, pattern_vectors] : patterns)
+    {
+        for (int i = 0; i < num_threads; i++)
+        {
+            for (int j = 0; j < END_LENGTH * 2; j++)
+            {
+                subst_patterns_total[read_length][j].AA += pattern_vectors[j][i].AA;
+                subst_patterns_total[read_length][j].AC += pattern_vectors[j][i].AC;
+                subst_patterns_total[read_length][j].AG += pattern_vectors[j][i].AG;
+                subst_patterns_total[read_length][j].AT += pattern_vectors[j][i].AT;
+                subst_patterns_total[read_length][j].AN += pattern_vectors[j][i].AN;
+
+                subst_patterns_total[read_length][j].GG += pattern_vectors[j][i].GG;
+                subst_patterns_total[read_length][j].GA += pattern_vectors[j][i].GA;
+                subst_patterns_total[read_length][j].GC += pattern_vectors[j][i].GC;
+                subst_patterns_total[read_length][j].GT += pattern_vectors[j][i].GT;
+                subst_patterns_total[read_length][j].GN += pattern_vectors[j][i].GN;
+
+                subst_patterns_total[read_length][j].CC += pattern_vectors[j][i].CC;
+                subst_patterns_total[read_length][j].CA += pattern_vectors[j][i].CA;
+                subst_patterns_total[read_length][j].CG += pattern_vectors[j][i].CG;
+                subst_patterns_total[read_length][j].CT += pattern_vectors[j][i].CT;
+                subst_patterns_total[read_length][j].CN += pattern_vectors[j][i].CN;
+
+                subst_patterns_total[read_length][j].TT += pattern_vectors[j][i].TT;
+                subst_patterns_total[read_length][j].TA += pattern_vectors[j][i].TA;
+                subst_patterns_total[read_length][j].TC += pattern_vectors[j][i].TC;
+                subst_patterns_total[read_length][j].TG += pattern_vectors[j][i].TG;
+                subst_patterns_total[read_length][j].TN += pattern_vectors[j][i].TN;
+            }
+        }
     }
 }
 
@@ -218,80 +294,6 @@ void process_chunk(
     bam_destructor(&bam_config);
 }
 
-void update_subst_patterns(
-    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
-    const std::map<int, std::vector<substitution_patterns_t>> &patterns)
-{
-    for (const auto &[read_length, pattern_vectors] : patterns)
-    {
-        for (int i = 0; i < END_LENGTH * 2; i++)
-        {
-            subst_patterns_total[read_length][i].AA += pattern_vectors[i].AA;
-            subst_patterns_total[read_length][i].AC += pattern_vectors[i].AC;
-            subst_patterns_total[read_length][i].AG += pattern_vectors[i].AG;
-            subst_patterns_total[read_length][i].AT += pattern_vectors[i].AT;
-            subst_patterns_total[read_length][i].AN += pattern_vectors[i].AN;
-
-            subst_patterns_total[read_length][i].GG += pattern_vectors[i].GG;
-            subst_patterns_total[read_length][i].GA += pattern_vectors[i].GA;
-            subst_patterns_total[read_length][i].GC += pattern_vectors[i].GC;
-            subst_patterns_total[read_length][i].GT += pattern_vectors[i].GT;
-            subst_patterns_total[read_length][i].GN += pattern_vectors[i].GN;
-
-            subst_patterns_total[read_length][i].CC += pattern_vectors[i].CC;
-            subst_patterns_total[read_length][i].CA += pattern_vectors[i].CA;
-            subst_patterns_total[read_length][i].CG += pattern_vectors[i].CG;
-            subst_patterns_total[read_length][i].CT += pattern_vectors[i].CT;
-            subst_patterns_total[read_length][i].CN += pattern_vectors[i].CN;
-
-            subst_patterns_total[read_length][i].TT += pattern_vectors[i].TT;
-            subst_patterns_total[read_length][i].TA += pattern_vectors[i].TA;
-            subst_patterns_total[read_length][i].TC += pattern_vectors[i].TC;
-            subst_patterns_total[read_length][i].TG += pattern_vectors[i].TG;
-            subst_patterns_total[read_length][i].TN += pattern_vectors[i].TN;
-        }
-    }
-}
-
-void update_subst_patterns_threads(
-    int num_threads,
-    std::map<int, std::vector<substitution_patterns_t>> &subst_patterns_total,
-    const std::map<int, std::vector<std::vector<substitution_patterns_t>>> &patterns)
-{
-    for (const auto &[read_length, pattern_vectors] : patterns)
-    {
-        for (int i = 0; i < num_threads; i++)
-        {
-            for (int j = 0; j < END_LENGTH * 2; j++)
-            {
-                subst_patterns_total[read_length][j].AA += pattern_vectors[j][i].AA;
-                subst_patterns_total[read_length][j].AC += pattern_vectors[j][i].AC;
-                subst_patterns_total[read_length][j].AG += pattern_vectors[j][i].AG;
-                subst_patterns_total[read_length][j].AT += pattern_vectors[j][i].AT;
-                subst_patterns_total[read_length][j].AN += pattern_vectors[j][i].AN;
-
-                subst_patterns_total[read_length][j].GG += pattern_vectors[j][i].GG;
-                subst_patterns_total[read_length][j].GA += pattern_vectors[j][i].GA;
-                subst_patterns_total[read_length][j].GC += pattern_vectors[j][i].GC;
-                subst_patterns_total[read_length][j].GT += pattern_vectors[j][i].GT;
-                subst_patterns_total[read_length][j].GN += pattern_vectors[j][i].GN;
-
-                subst_patterns_total[read_length][j].CC += pattern_vectors[j][i].CC;
-                subst_patterns_total[read_length][j].CA += pattern_vectors[j][i].CA;
-                subst_patterns_total[read_length][j].CG += pattern_vectors[j][i].CG;
-                subst_patterns_total[read_length][j].CT += pattern_vectors[j][i].CT;
-                subst_patterns_total[read_length][j].CN += pattern_vectors[j][i].CN;
-
-                subst_patterns_total[read_length][j].TT += pattern_vectors[j][i].TT;
-                subst_patterns_total[read_length][j].TA += pattern_vectors[j][i].TA;
-                subst_patterns_total[read_length][j].TC += pattern_vectors[j][i].TC;
-                subst_patterns_total[read_length][j].TG += pattern_vectors[j][i].TG;
-                subst_patterns_total[read_length][j].TN += pattern_vectors[j][i].TN;
-            }
-        }
-    }
-}
-
 bool get_substitution_patterns_for_chr(
     const int num_threads,
     const int min_len,
@@ -313,41 +315,83 @@ bool get_substitution_patterns_for_chr(
         subst_patterns_deam_3[i] = std::vector<std::vector<substitution_patterns_t>>(END_LENGTH * 2, std::vector<substitution_patterns_t>(num_threads));
     }
 
-    // Create a read length distribution map for each thread
     std::vector<std::map<int, int>> read_length_distribution_per_thread(num_threads);
 
-    std::pair<int, int> tid_chunk_size = check_bam(bam_file_location, chr, num_threads);
-    if (tid_chunk_size.first < 0)
+    // Open BAM to get tid and chromosome length from header
+    bam_file_config_t tmp_config = {};
+    bam_constructor(bam_file_location, &tmp_config);
+    if (!tmp_config.bam_file || !tmp_config.header || !tmp_config.index)
     {
+        std::cerr << "Failed to open BAM: " << bam_file_location << std::endl;
         return false;
     }
-    int tid = tid_chunk_size.first;
-    int chunk_size = tid_chunk_size.second;
+
+    int tid = bam_name2id(tmp_config.header, chr.c_str());
     if (tid < 0)
     {
+        std::cerr << "Chromosome not found in BAM: " << chr << std::endl;
+        bam_destructor(&tmp_config);
         return false;
     }
+
+    int chr_len = tmp_config.header->target_len[tid];
+    bam_destructor(&tmp_config);
+
+    int num_tiles = num_threads * 4;
+    int tile_size = std::max(1, chr_len / num_tiles);
+
+    std::vector<std::pair<int, int>> tiles;
+    for (int pos = 0; pos < chr_len; pos += tile_size)
+    {
+        int end = std::min(pos + tile_size, chr_len);
+        tiles.push_back({pos, end});
+    }
+
+    // Work queue for dynamic dispatch
+    std::queue<std::pair<int, int>> work_queue;
+    for (const auto& tile : tiles)
+    {
+        work_queue.push(tile);
+    }
+
+    std::mutex queue_mutex;
+
+    // Worker lambda: pulls tiles from queue until empty
+    auto worker = [&](int thread_id)
+    {
+        while (true)
+        {
+            std::pair<int, int> tile;
+            {
+                std::lock_guard<std::mutex> lock(queue_mutex);
+                if (work_queue.empty()) return;
+                tile = work_queue.front();
+                work_queue.pop();
+            }
+            process_chunk(thread_id, min_len, max_len, bam_file_location,
+                          tid, tile.first, tile.second,
+                          std::ref(subst_patterns),
+                          std::ref(subst_patterns_deam_5),
+                          std::ref(subst_patterns_deam_3),
+                          std::ref(read_length_distribution_per_thread));
+        }
+    };
 
     std::vector<std::thread> threads;
     for (int i = 0; i < num_threads; i++)
     {
-        int start = i * chunk_size;
-        int end = start + chunk_size;
-
-        threads.push_back(std::thread(process_chunk, i, min_len, max_len, bam_file_location, tid, start, end,
-                                      std::ref(subst_patterns), std::ref(subst_patterns_deam_5),
-                                      std::ref(subst_patterns_deam_3), std::ref(read_length_distribution_per_thread)));
+        threads.emplace_back(worker, i);
     }
 
-    for (auto &thread : threads)
+    for (auto& t : threads)
     {
-        thread.join();
+        t.join();
     }
 
-    // Combine the read length distribution from all threads
+    // Combine read length distribution
     for (int i = 0; i < num_threads; i++)
     {
-        for (const auto &[length, count] : read_length_distribution_per_thread[i])
+        for (const auto& [length, count] : read_length_distribution_per_thread[i])
         {
             if (length >= min_len && length <= max_len)
             {
@@ -356,7 +400,7 @@ bool get_substitution_patterns_for_chr(
         }
     }
 
-    // Combine the substitution patterns from all threads
+    // Combine substitution patterns
     update_subst_patterns_threads(num_threads, subst_patterns_total, subst_patterns);
     update_subst_patterns_threads(num_threads, subst_patterns_deam_5_total, subst_patterns_deam_5);
     update_subst_patterns_threads(num_threads, subst_patterns_deam_3_total, subst_patterns_deam_3);
