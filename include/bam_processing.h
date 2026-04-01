@@ -116,6 +116,43 @@ std::pair<int, int> check_bam(
     return { tid, chunk_size };
 }
 
+bool is_bam_sorted(const bam_file_config_t& bam_config)
+{
+    if (bam_config.header->n_targets > 0)
+    {
+        bam1_t* test_aln = bam_init1();
+        int32_t last_tid = -1;
+        int32_t last_pos = -1;
+        bool is_sorted = true;
+        uint64_t read_count = 0;
+
+        while (sam_read1(bam_config.bam_file, bam_config.header, test_aln) >= 0 && is_sorted)
+        {
+            if (test_aln->core.tid >= 0)
+            {
+                if (test_aln->core.tid < last_tid || 
+                    (test_aln->core.tid == last_tid && test_aln->core.pos < last_pos))
+                {
+                    is_sorted = false;
+                }
+                last_tid = test_aln->core.tid;
+                last_pos = test_aln->core.pos;
+            }
+            read_count++;
+
+            if (read_count > 100000) // Check only the first 100k reads for efficiency
+            {
+                break;
+            }
+        }
+
+        bam_destroy1(test_aln);
+        return is_sorted;
+    }
+
+    return true; // If no targets, consider it sorted
+}
+
 void get_chromosomes_from_bam(
     std::vector<std::string>& chromosomes,
     const std::string& bam_file_location)
