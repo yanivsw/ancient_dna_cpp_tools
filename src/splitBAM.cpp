@@ -74,7 +74,7 @@ uint64_t count_reads_in_bam(const std::string &input_bam)
     if (!bam_constructor(input_bam, &input_bam_config, "r"))
     {
         std::cerr << "Error opening input BAM file: " << input_bam << std::endl;
-        return 0;
+        // return 0;
     }
 
     // Count the reads
@@ -99,16 +99,6 @@ void split_bam_file(
     int num_chunks,
     int num_threads)
 {
-    // Check if BAM index exists, create if not
-    if (!bam_index_exists(input_bam))
-    {
-        if (create_bam_index(input_bam) != 0)
-        {
-            std::cerr << "Failed to create BAM index. Exiting." << std::endl;
-            std::exit(1);
-        }
-    }
-
     // Get the total number of reads
     uint64_t total_reads = count_reads_in_bam(input_bam);
     if (total_reads == 0)

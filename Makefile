@@ -1,8 +1,8 @@
 CXX = g++
 CXXFLAGS = -Wall -Wextra -std=c++17
-LDFLAGS = -lm -lhts -lpthread -llzma -lz -lbz2
-INCLUDES = -I/r1/people/bioinf/src/htslib-1.4/htslib -Iinclude
-LIBS = -L/r1/people/bioinf/src/htslib-1.4/htslib
+LDFLAGS = -lm -lhts -lcrypto -lpthread -lcurl -llzma -lz -lbz2
+INCLUDES = -I/r1/people/bioinf/src/htslib-1.4 -Iinclude
+LIBS = -L/r1/people/bioinf/src/htslib-1.4
 
 # Directories
 SRCDIR = src
@@ -16,6 +16,7 @@ deamBAM = deamBAM
 analyzeVCF = analyzeVCF
 splitBAM = splitBAM
 dedupBAM = dedupBAM
+analyzeBAM_COVERAGE = analyzeBAMCoverage
 
 # Source files
 SRCS1 = $(SRCDIR)/analyzeBAM.cpp
@@ -24,6 +25,7 @@ SRCS3 = $(SRCDIR)/deamBAM.cpp
 SRCS4 = $(SRCDIR)/analyzeVCF.cpp
 SRCS5 = $(SRCDIR)/splitBAM.cpp
 SRCS6 = $(SRCDIR)/dedupBAM.cpp
+SRCS7 = $(SRCDIR)/analyzeBAMCoverage.cpp
 
 # Object files
 OBJS1 = $(OBJDIR)/analyzeBAM.o
@@ -32,10 +34,11 @@ OBJS3 = $(OBJDIR)/deamBAM.o
 OBJS4 = $(OBJDIR)/analyzeVCF.o
 OBJS5 = $(OBJDIR)/splitBAM.o
 OBJS6 = $(OBJDIR)/dedupBAM.o
+OBJS7 = $(OBJDIR)/analyzeBAMCoverage.o
 
 .PHONY: all clean
 
-all: $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM) $(dedupBAM)
+all: $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM) $(dedupBAM) $(analyzeBAM_COVERAGE)
 
 # Create object directory if it doesn't exist
 $(OBJDIR):
@@ -59,10 +62,13 @@ $(splitBAM): $(OBJDIR) $(OBJS5)
 $(dedupBAM): $(OBJDIR) $(OBJS6)
 	$(CXX) $(CXXFLAGS) -o $(dedupBAM) $(OBJS6) $(LIBS) $(LDFLAGS)
 
+$(analyzeBAM_COVERAGE): $(OBJDIR) $(OBJS7)
+	$(CXX) $(CXXFLAGS) -o $(analyzeBAM_COVERAGE) $(OBJS7) $(LIBS) $(LDFLAGS)
+
 # Pattern rule for object files
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f $(OBJDIR)/*.o $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM) $(dedupBAM)
+	rm -f $(OBJDIR)/*.o $(analyzeBAM) $(filterBAM) $(deamBAM) $(analyzeVCF) $(splitBAM) $(dedupBAM) $(analyzeBAM_COVERAGE)
 	rmdir $(OBJDIR) 2>/dev/null || true

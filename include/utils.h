@@ -129,4 +129,12 @@ std::vector<std::string> split_by_numeric(const std::string &str)
     return result;
 }
 
+static inline std::string trim_copy(std::string s)
+{
+    auto not_space = [](unsigned char c) { return !std::isspace(c); };
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+    s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+    return s;
+}
+
 #endif // UTILS_H

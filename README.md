@@ -4,12 +4,13 @@ A collection of high-performance C++ tools for analyzing and processing ancient 
 
 ## Tools
 
-This toolkit includes six specialized tools:
+This toolkit includes seven tools:
 
 - **analyzeBAM**: Analyze BAM files to generate comprehensive statistics on alignments with filtering and optional duplicate removal
 - **dedupBAM**: Multi-threaded PCR duplicate removal tool optimized for paired-end sequencing data
 - **filterBAM**: Filter BAM files based on deamination patterns (C→T substitutions)
 - **deamBAM**: Analyze damage patterns in ancient DNA, particularly terminal substitution frequencies
+- **analyzeBAMCoverage**: Analyze coverage in BAM files with optional GC content stratification and read-length binning
 - **analyzeVCF**: Analyze VCF files to generate statistics on non-reference alleles
 - **splitBAM**: Split BAM files into multiple chunks for parallel processing
 
@@ -68,11 +69,12 @@ Options:
 - `-paired`: Do not disregard paired reads
 - `-count_f`: Ignore filter (QC failed) flag
 - `-remove_dups`: Remove PCR duplicates during analysis
+- `-ignore_read_groups`: Ignore read group information when identifying duplicates
 - `-help`: Display help message
 
 ### dedupBAM
 
-A multi-threaded PCR duplicate removal tool specifically designed for paired-end sequencing data.
+A multi-threaded PCR duplicate removal tool that can handle paired-end sequencing data.
 
 ```bash
 ./dedupBAM [options] <BAM file>
@@ -83,9 +85,9 @@ Options:
 - `-min_len <length>`: Minimum alignment length (default: 0)
 - `-min_map_qual <quality>`: Minimum mapping quality (default: 0)
 - `-ignore_read_groups`: Ignore read group information when identifying duplicates
-- `-ignore_length`: Ignore alignment length when identifying duplicates
 - `-ignore_qc_fail`: Process reads that failed QC
 - `-threads <num>`: Number of threads to use (default: 4)
+- `-keep_chr_bams`: Keep chromosome-level BAM files
 - `-help`: Display help message
 
 #### Output Format
@@ -123,6 +125,34 @@ Options:
 - `-min_len <num>`: Minimum read length (default: 35)
 - `-max_len <num>`: Maximum read length (default: 300)
 - `-help`: Show help message
+
+### analyzeBAMCoverage
+
+Generate coverage depth histograms across mappable regions, optionally stratified by read-length bins and GC bins.
+
+```bash
+./analyzeBAMCoverage [options]
+```
+
+Required arguments:
+- `-b <path>`: Input BAM file (coordinate-sorted, indexed)
+- `-o <path>`: Output directory
+- `-ref <str>`: Reference genome name: `t2t | hg38 | hg19`
+- `-r <csv>`: Read-length bin edges CSV (edges are inclusive/exclusive as `[lo, hi)`), e.g. `35,60,100,142`
+- `-m <path>`: Mappability BED file (0-based, half-open)
+
+Optional arguments:
+- `-gc <path>`: GC bin directory (enables GC-stratified coverage)
+  - Expected per-chrom files: `<dir>/chr<N>.tab.gz`
+  - Each line is parsed as: `<ignored_token> <1-based_pos> <gc_percent_int>`
+- `-chr <c1,c2,...>`: Chromosomes to process (e.g. `1,2,3,5`)  
+  Default: `1-22`
+- `-t <int>`: Threads per chromosome (default: `40`)
+- `-h`: Print help and exit
+
+Notes:
+- Coverage is computed only on positions covered by the mappability BED mask.
+- Read-length binning uses the alignment query length (`l_qseq`) and bins are `[edge[i], edge[i+1])`, with the last bin extending to infinity.
 
 ### splitBAM
 
@@ -188,6 +218,31 @@ When used with `-remove_dups`:
 - `substitution_patterns_<read_length>.<bam_name>.txt`: Detailed substitution patterns by read length
 - `read_length_distribution.<bam_name>.txt`: Read length distribution
 
+### analyzeBAMCoverage
+
+For each processed chromosome `<chr>` (e.g. `1`) the tool writes:
+
+- `coverage.<bam_name>.chr<chr>.tab`  
+  Two columns: `Cov<TAB>Total` (depth histogram for all reads)
+
+- `coverage.<bam_name>.chr<chr>.<lo>_<hi>.tab`  
+  Depth histogram restricted to reads whose read length falls in that bin.
+
+If `-gc` is provided, it also writes GC-stratified depth histograms:
+
+- `gc.<bam_name>.chr<chr>.tab`  
+  Table with header `Cov` then GC bins `0..10` plus `GC_missing`.
+  Each row gives counts for a depth at each GC bin.
+
+- `gc.<bam_name>.chr<chr>.<lo>_<hi>.tab`  
+  Same as above, stratified by read-length bin.
+
+Additionally, “global” (all processed chromosomes combined) files are written:
+
+- `coverage.<bam_name>.tab`
+- `coverage.<bam_name>.<lo>_<hi>.tab`
+- (if GC enabled) `gc.<bam_name>.tab` and `gc.<bam_name>.<lo>_<hi>.tab`
+
 ### splitBAM
 
 - `<output_prefix>.0.bam`, `<output_prefix>.1.bam`, ...: Split BAM files
@@ -198,64 +253,6 @@ When used with `-remove_dups`:
 - `het_gq_dist.txt`: Genotype quality distribution for heterozygous sites (with `-output_distributions`)
 - `alt_gq_dist.txt`: Genotype quality distribution for homozygous alternative sites (with `-output_distributions`)
 - `het_dist_<chr>_<block_size>.tab`: Heterozygosity distribution per chromosome (with `-output_distributions`)
-
-## Examples
-
-### Basic Analysis and Filtering
-
-Analyze BAM files with minimum length 35 and mapping quality 25:
-```bash
-./analyzeBAM -min_len 35 -min_map_qual 25 sample1.bam sample2.bam
-```
-
-### On-Target Analysis with Duplicate Removal
-
-Analyze reads on target regions and remove duplicates:
-```bash
-./analyzeBAM -targetfile targets.bed -remove_dups -min_len 35 -min_map_qual 25 sample.bam
-```
-
-### Standalone Duplicate Removal
-
-Remove duplicates using 8 threads:
-```bash
-./dedupBAM -threads 8 -min_len 35 -min_map_qual 25 sample.bam
-```
-
-Remove duplicates ignoring read groups:
-```bash
-./dedupBAM -ignore_read_groups -threads 16 sample.bam
-```
-
-### Damage Pattern Analysis
-
-Filter for reads with 5' C→T deamination at positions 0, 1, and 2:
-```bash
-./filterBAM -p5 0,1,2 -p3 0,-1,-2 -suffix deam3_or_5 sample.bam
-```
-
-Analyze damage patterns using 16 threads:
-```bash
-./deamBAM -threads 16 -min_len 35 -max_len 150 sample.bam
-```
-
-### VCF Analysis
-
-Analyze VCF files for sample NA12878 with hg38 reference:
-```bash
-./analyzeVCF -sample NA12878 \
-  -vcf_pattern /path/to/sample.{chr}.vcf.gz \
-  -filter_pattern /path/to/filter.{chr}.bed \
-  -reference hg38 \
-  -out_folder results/
-```
-
-### Parallel Processing
-
-Split a BAM file into 10 chunks using 8 threads:
-```bash
-./splitBAM sample.bam output/sample_chunk 10 8
-```
 
 ## Notes
 
