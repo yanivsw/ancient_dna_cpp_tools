@@ -16,15 +16,10 @@
 #include "bam_processing.h"
 #include "types.h"
 
-// Global RNG for random selection of a representative alignment among duplicates
-std::mt19937 gen(std::random_device{}());
-
-// Set to track which read names should be kept (first seen mates that passed deduplication)
-std::unordered_set<std::string> retained_read_names;
-
 void group_alignments(
     std::vector<bam1_t*>& alignment_buffer,
     std::unordered_map<AlignmentGroupKey, std::vector<bam1_t*>, AlignmentGroupKeyHash>& alignment_groups,
+    std::unordered_set<std::string>& retained_read_names,
     bool ignore_length = false,
     bool ignore_read_groups = true)
 {
@@ -88,9 +83,9 @@ void group_alignments(
             AlignmentGroupKey key2 = {
                 right_read->core.pos,
                 255, // special orientation value for retained second mates
-                0,
+                read_group_hash,
                 true,
-                0
+                static_cast<uint32_t>(left_read->core.pos)
             };
 
             alignment_groups[key1].push_back(left_read);
@@ -107,9 +102,9 @@ void group_alignments(
                 AlignmentGroupKey key = {
                     aln->core.pos,
                     255, // special orientation value for retained second mates
-                    0,
+                    read_group_hash,
                     true,
-                    0
+                    static_cast<uint32_t>(aln->core.mpos)
                 };
                 alignment_groups[key].push_back(aln);
             }
@@ -163,12 +158,14 @@ void group_alignments(
 void remove_duplicates(
     std::vector<bam1_t*>& alignment_buffer,
     std::vector<bam1_t*>& deduped_alignment_buffer,
+    std::unordered_set<std::string>& retained_read_names,
+    std::mt19937& gen,
     bool ignore_length = false,
     bool ignore_read_groups = true,
     duplication_stats_struct* dup_stats = nullptr)
 {
     std::unordered_map<AlignmentGroupKey, std::vector<bam1_t*>, AlignmentGroupKeyHash> alignment_groups;
-    group_alignments(alignment_buffer, alignment_groups, ignore_length, ignore_read_groups);
+    group_alignments(alignment_buffer, alignment_groups, retained_read_names, ignore_length, ignore_read_groups);
 
     // Convert to vector and sort by position
     std::vector<std::pair<AlignmentGroupKey, std::vector<bam1_t*>>> sorted_groups;
@@ -295,8 +292,8 @@ void remove_duplicates(
                 dup_stats->total += alignment_group.size();
                 for (auto* aln : alignment_group)
                 {
-                    // int32_t effective_length = get_effective_length(aln, dup_stats->length_distribution_total.size());
-                    dup_stats->length_distribution_total[effective_length]++;
+                    int32_t aln_effective_length = get_effective_length(aln, dup_stats->length_distribution_total.size());
+                    dup_stats->length_distribution_total[aln_effective_length]++;
                 }
             }
         }

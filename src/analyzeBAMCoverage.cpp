@@ -12,6 +12,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cctype>
+#include <array>
 
 #include "bam_processing.h"
 #include "bed_processing.h"
@@ -321,7 +322,6 @@ static int get_coverage_histograms_region(
     int64_t end,
     const std::vector<bool>& bed_mask,
     const std::vector<uint8_t>& gc_bin_by_pos,
-    std::vector<uint8_t>& covered_by_pos,
     chrom_accum_t& out)
 {
     const int64_t chr_len = static_cast<int64_t>(bam_config.header->target_len[tid]);
@@ -387,8 +387,6 @@ static int get_coverage_histograms_region(
                 continue;
             }
 
-            covered_by_pos[pos0] = 1;
-
             uint32_t gc_bin = 0;
             const uint8_t gc_u8 = gc_bin_by_pos[pos0];
             if (gc_u8 == GC_BIN_MISSING)
@@ -419,7 +417,8 @@ static int get_coverage_histograms_region(
                 {
                     continue;
                 }
-                if (alignment->core.flag & (BAM_FSECONDARY | BAM_FSUPPLEMENTARY))
+                // Don't count pairs for now (may be added in the future as an option)
+                if (alignment->core.flag & (BAM_FSECONDARY | BAM_FSUPPLEMENTARY | BAM_FPAIRED))
                 {
                     continue;
                 }
@@ -567,8 +566,6 @@ static int process_one_chromosome_in_threads(
         return 1;
     }
 
-    std::vector<uint8_t> covered_by_pos(static_cast<size_t>(chromosome_length), 0);
-
     const int64_t chunk_size = 1000000;
     std::vector<std::pair<int64_t, int64_t>> regions;
     for (int64_t chunk_start = 0; chunk_start < chromosome_length; chunk_start += chunk_size)
@@ -612,7 +609,7 @@ static int process_one_chromosome_in_threads(
                 const auto [beg, end] = regions[r];
                 (void)get_coverage_histograms_region(bam_config, tid,beg, end,
                                                      bed_mask, gc_bin_by_pos,
-                                                     covered_by_pos, local_accumulators[t]);
+                                                     local_accumulators[t]);
                 
                 std::cout << "Thread " << t << " done with region " << r << " (" << beg << "-" << end << ")\n";
             }
@@ -772,10 +769,6 @@ int main(int argc, char* argv[])
         }
     }
 
-    // std::string bam_file = "/mnt/scratch/yaniv/Altai/Altai.T2T.ontarget.uniq.L35MQ25.bam";
-    // std::string output_file_location = "/mnt/scratch/yaniv/Altai/coverage";
-    // const std::string bins_csv = "35,60,100,142";
-
     // Select length map
     std::unordered_map<std::string, long> len_map;
     if (ref_name == "t2t"  || ref_name == "T2T")
@@ -830,13 +823,7 @@ int main(int argc, char* argv[])
     std::string input_bam_name = extract_file_name(bam_file);
 
     bed_file_t map35;
-    read_bed_file("/mnt/expressions/yaniv/genomes/T2T_CHM13v2.0_vs_hg19/T2T.map35_100.bed", map35);
-
-    // read_bed_file("/mnt/expressions/yaniv/genomes/T2T_CHM13v2.0_vs_hg19/hg19.map35_100.bed", map35);
-    // read_bed_file("/mnt/expressions/yaniv/genomes/T2T_CHM13v2.0_vs_hg19/hg19.map35_100.unique.bed", map35);
-    // read_bed_file("/mnt/expressions/yaniv/genomes/T2T_CHM13v2.0_vs_hg19/hg19.map35_100.intersect.bed", map35);
-    // auto len_map = t2t_len_map;
-    // auto len_map = hg19_len_map;
+    read_bed_file(bed_file, map35);
     
     for (size_t chr_i = 0; chr_i < chromosomes.size(); ++chr_i)
     {

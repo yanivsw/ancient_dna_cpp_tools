@@ -17,10 +17,10 @@
 #include "types.h"
 #include "pair_handler.h"
 
-#define ALN_BUFFER_SIZE 2000000
+#define VERSION_NUMBER 0.23
 
-#define READ_LEN_DIST_SIZE 512
-#define VERSION_NUMBER 0.22
+#define ALN_BUFFER_SIZE 2000000
+#define READ_LEN_DIST_SIZE 1024
 
 struct ChromosomeReadyGuard {
     int tid;
@@ -86,14 +86,19 @@ void process_chromosome(
     std::vector<bam1_t*> deduped_alignment_buffer;
     int32_t current_position = -1;
 
+    std::unordered_set<std::string> retained_read_names;
+    std::mt19937 gen(std::random_device{}());
+
     paired_read_tracker_t pair_tracker;
 
     bam1_t* alignment = bam_init1();
     while (sam_itr_next(input_bam_config.bam_file, iter, alignment) >= 0)
     {
-        bool passes_basic_filters = 
+        bool passes_basic_filters =
             (alignment->core.l_qseq >= static_cast<int32_t>(min_length)) &&
             !(alignment->core.flag & BAM_FMUNMAP) &&
+            !(alignment->core.flag & BAM_FSECONDARY) &&
+            !(alignment->core.flag & BAM_FSUPPLEMENTARY) &&
             (!(alignment->core.flag & BAM_FPAIRED) || (alignment->core.flag & BAM_FPROPER_PAIR)) &&
             (!(alignment->core.flag & BAM_FPAIRED) || (alignment->core.mtid == tid)) &&
             ((alignment->core.flag & BAM_FQCFAIL) == 0 || ignore_qc_fail);
@@ -114,7 +119,7 @@ void process_chromosome(
             rescue_failed_mates(alignment_buffer, pair_tracker);
 
             // Perform deduplication
-            remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
+            remove_duplicates(alignment_buffer, deduped_alignment_buffer, retained_read_names, gen, ignore_length, ignore_read_groups, &dup_stats);
 
             if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
             {
@@ -149,7 +154,7 @@ void process_chromosome(
     {
         rescue_failed_mates(alignment_buffer, pair_tracker);
 
-        remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
+        remove_duplicates(alignment_buffer, deduped_alignment_buffer, retained_read_names, gen, ignore_length, ignore_read_groups, &dup_stats);
 
         if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
         {
@@ -355,7 +360,7 @@ int main(int argc, char* argv[])
 
     if (input_bam_config.index == nullptr)
     {
-        std::cerr << "Error: No index found for " << input_bam_name << std::endl;
+        std::cerr << "Error: No index found for " << bam_file << std::endl;
         bam_destructor(&input_bam_config);
         return 1;
     }

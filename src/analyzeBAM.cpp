@@ -17,9 +17,9 @@
 #include "utils.h"
 #include "types.h"
 
-#define VERSION_NUMBER 0.84
+#define VERSION_NUMBER 0.85
 
-#define ALN_BUFFER_SIZE 1000000
+#define ALN_BUFFER_SIZE 2000000
 #define READ_LEN_DIST_SIZE 1024
 
 std::unordered_set<std::string> off_genome_chromosomes = {
@@ -403,6 +403,9 @@ int main(int argc, char* argv[])
         std::vector<bam1_t*> alignment_buffer;
         std::vector<bam1_t*> deduped_alignment_buffer;
 
+        std::unordered_set<std::string> retained_read_names;
+        std::mt19937 gen(std::random_device{}());
+
         paired_read_tracker_t pair_tracker;
 
         // bam flags: "qdfs21RrUuPp"
@@ -432,7 +435,7 @@ int main(int argc, char* argv[])
                         rescue_failed_mates(alignment_buffer, pair_tracker);
                     }
 
-                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
+                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, retained_read_names, gen, ignore_length, ignore_read_groups, &dup_stats);
 
                     if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
                     {
@@ -446,6 +449,10 @@ int main(int argc, char* argv[])
                     }
                 }
 
+                if (remove_dups)
+                {
+                    retained_read_names.clear();
+                }
                 if (is_target_file)
                 {
                     if (bed_region_map[current_chromosome].size() > 0)
@@ -548,7 +555,7 @@ int main(int argc, char* argv[])
 
                 if (remove_dups)
                 {
-                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
+                    remove_duplicates(alignment_buffer, deduped_alignment_buffer, retained_read_names, gen, ignore_length, ignore_read_groups, &dup_stats);
                     if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
                     {
                         std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
@@ -642,7 +649,7 @@ int main(int argc, char* argv[])
         }
         if (remove_dups)
         {
-            remove_duplicates(alignment_buffer, deduped_alignment_buffer, ignore_length, ignore_read_groups, &dup_stats);
+            remove_duplicates(alignment_buffer, deduped_alignment_buffer, retained_read_names, gen, ignore_length, ignore_read_groups, &dup_stats);
             if (write_alignment_buffer_to_bam(&output_bam_config, deduped_alignment_buffer) != 0)
             {
                 std::cerr << "Failed to write alignment buffer to " << output_bam_config.bam_file_location << std::endl;
