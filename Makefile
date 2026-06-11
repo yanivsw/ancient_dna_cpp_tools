@@ -1,8 +1,8 @@
 CXX = g++
 CXXFLAGS = -Wall -Wextra -std=c++17
+
 LDFLAGS = -lm -lhts -lcrypto -lpthread -lcurl -llzma -lz -lbz2
-INCLUDES = -I/r1/people/bioinf/src/htslib-1.4 -Iinclude
-LIBS = -L/r1/people/bioinf/src/htslib-1.4
+INCLUDES = -Iinclude
 
 # Directories
 SRCDIR = src
