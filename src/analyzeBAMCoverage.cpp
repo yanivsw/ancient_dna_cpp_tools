@@ -320,6 +320,7 @@ static int get_coverage_histograms_region(
     int tid,
     int64_t beg,
     int64_t end,
+    int64_t min_map_qual,
     const std::vector<bool>& bed_mask,
     const std::vector<uint8_t>& gc_bin_by_pos,
     chrom_accum_t& out)
@@ -419,6 +420,10 @@ static int get_coverage_histograms_region(
                 }
                 // Don't count pairs for now (may be added in the future as an option)
                 if (alignment->core.flag & (BAM_FSECONDARY | BAM_FSUPPLEMENTARY | BAM_FPAIRED))
+                {
+                    continue;
+                }
+                if (alignment->core.qual < min_map_qual)
                 {
                     continue;
                 }
@@ -554,6 +559,7 @@ static int process_one_chromosome_in_threads(
     const std::string& gc51_file,
     const std::string& chr,
     long chromosome_length,
+    uint64_t min_map_qual,
     bed_file_t& map35,
     size_t n_threads,
     bool compute_gc,
@@ -607,11 +613,11 @@ static int process_one_chromosome_in_threads(
                 }
 
                 const auto [beg, end] = regions[r];
-                (void)get_coverage_histograms_region(bam_config, tid,beg, end,
+                (void)get_coverage_histograms_region(bam_config, tid, beg, end, min_map_qual,
                                                      bed_mask, gc_bin_by_pos,
                                                      local_accumulators[t]);
                 
-                std::cout << "Thread " << t << " done with region " << r << " (" << beg << "-" << end << ")\n";
+                // std::cout << "Thread " << t << " done with region " << r << " (" << beg << "-" << end << ")\n";
             }
 
             bam_destructor(&bam_config);
@@ -631,23 +637,6 @@ static int process_one_chromosome_in_threads(
 
     add_zero_coverage_into_histograms(bed_mask, gc_bin_by_pos, chrom_out);
     return 0;
-}
-
-void print_help(const char* prog)
-{
-    std::cout << "Usage: " << prog << " [options]\n"
-              << "Required:\n"
-              << "  -b   <path>        Input BAM file\n"
-              << "  -o   <path>        Output directory\n"
-              << "  -m   <path>        Mappability BED file\n"
-              << "  -r   <str>         Read length bins CSV e.g. 35,60,100,142\n"
-              << "  -ref <str>         Reference genome: t2t | hg38 | hg19\n"
-              << "Optional:\n"
-              << "  -gc  <path>        GC bin directory (enables GC computation)\n"
-              << "                     Expected files: <dir>/chr<N>.tab.gz\n"
-              << "  -chr <c1,c2,...>   Chromosomes to process [default: 1-22]\n"
-              << "  -t   <int>         Threads per chromosome [default: 40]\n"
-              << "  -h                 Print this help\n";
 }
 
 static void write_cov_table(
@@ -704,6 +693,24 @@ static void write_gc_cov_table_flat(
     }
 }
 
+void print_help(const char* prog)
+{
+    std::cout << "Usage: " << prog << " [options]\n"
+              << "Required:\n"
+              << "  -b   <path>         Input BAM file\n"
+              << "  -o   <path>         Output directory\n"
+              << "  -m   <path>         Mappability BED file\n"
+              << "  -r   <str>          Read length bins CSV e.g. 35,60,100,142\n"
+              << "  -ref <str>          Reference genome: t2t | hg38 | hg19\n"
+              << "Optional:\n"
+              << "  -gc  <path>         GC bin directory (enables GC computation)\n"
+              << "                      Expected files: <dir>/chr<N>.tab.gz\n"
+              << "  -chr <c1,c2,...>    Chromosomes to process [default: 1-22]\n"
+              << "  -t   <int>          Threads per chromosome [default: 40]\n"
+              << "  -min_map_qual <int> Minimum mapping quality to count a read [default: 25]\n"
+              << "  -h                  Print this help\n";
+}
+
 int main(int argc, char* argv[])
 {
     std::string bam_file;
@@ -714,6 +721,7 @@ int main(int argc, char* argv[])
     std::string chromosomes_str;
     std::string ref_name;
     size_t n_threads_per_chr = 40;
+    uint64_t min_map_qual = 25;
 
     if (argc == 1)
     {
@@ -755,6 +763,10 @@ int main(int argc, char* argv[])
         else if (arg == "-ref" && i+1 < argc)
         {
             ref_name = argv[++i];
+        }
+        else if (arg == "-min_map_qual" && i+1 < argc)
+        {
+            min_map_qual = std::stoul(argv[++i]);
         }
         else if (arg == "-h")
         {
@@ -835,6 +847,7 @@ int main(int argc, char* argv[])
                                                          gc51_file,
                                                          chr,
                                                          chr_len,
+                                                         min_map_qual,
                                                          map35,
                                                          n_threads_per_chr,
                                                          compute_gc,

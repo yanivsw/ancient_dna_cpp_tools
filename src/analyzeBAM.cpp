@@ -1,6 +1,7 @@
 #include <iostream>
 #include <variant>
 #include <htslib/sam.h>
+#include <htslib/hts.h>
 #include <vector>
 #include <fstream>
 #include <string>
@@ -17,7 +18,7 @@
 #include "utils.h"
 #include "types.h"
 
-#define VERSION_NUMBER 0.85
+#define VERSION_NUMBER 0.86
 
 #define ALN_BUFFER_SIZE 2000000
 #define READ_LEN_DIST_SIZE 1024
@@ -367,7 +368,7 @@ int main(int argc, char* argv[])
 
         // Get the chromosome names from the BAM header
         std::vector<std::string> chromosomes;
-        get_chromosomes_from_bam(chromosomes, bam_file);
+        get_chromosomes_from_bam(chromosomes, input_bam_config.header);
 
         std::string version_str = std::to_string(VERSION_NUMBER);
         version_str.erase(version_str.find_last_not_of('0') + 1, std::string::npos);

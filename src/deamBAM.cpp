@@ -16,7 +16,7 @@
 #include "bam_processing.h"
 
 #define END_LENGTH 21
-#define VERSION_NUMBER 0.2
+#define VERSION_NUMBER 0.21
 
 struct substitution_patterns_t
 {
@@ -658,13 +658,17 @@ int main(int argc, char *argv[])
         }
     }
 
+    bam_file_config_t input_bam_config = {};
+    bam_constructor(bam_file_location, &input_bam_config, "r");
+
     std::vector<std::string> chromosomes;
-    get_chromosomes_from_bam(chromosomes, bam_file_location);
+    get_chromosomes_from_bam(chromosomes, input_bam_config.header);
     if (chromosomes.empty())
     {
         std::cerr << "Error: No chromosomes found in the BAM file" << std::endl;
         return 1;
     }
+    bam_destructor(&input_bam_config);
 
     std::map<std::string, std::map<int, int>> read_length_distribution_per_chromosome;
 

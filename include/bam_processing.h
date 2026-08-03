@@ -155,21 +155,13 @@ bool is_bam_sorted(const bam_file_config_t& bam_config)
 
 void get_chromosomes_from_bam(
     std::vector<std::string>& chromosomes,
-    const std::string& bam_file_location)
+    bam_hdr_t* header)
 {
-    bam_file_config_t bam_config = {};
-    if (!bam_constructor(bam_file_location, &bam_config))
-    {
-        std::cerr << "Failed to open BAM file: " << bam_file_location << std::endl;
-        return;
-    }
-
     // Get the chromosome names from the BAM header
-    for (int i = 0; i < bam_config.header->n_targets; i++)
+    for (int i = 0; i < header->n_targets; i++)
     {
-        chromosomes.push_back(bam_config.header->target_name[i]);
+        chromosomes.push_back(header->target_name[i]);
     }
-    bam_destructor(&bam_config);
 }
 
 int write_alignment_buffer_to_bam(
