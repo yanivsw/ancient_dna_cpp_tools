@@ -13,7 +13,7 @@
 #include "utils.h"
 #include "bam_processing.h"
 
-#define VERSION_NUMBER 0.3
+#define VERSION_NUMBER 0.4
 #define ALN_BUFFER_SIZE 1000000
 
 void print_help()
@@ -24,6 +24,7 @@ void print_help()
     std::cout << "  -suffix                   string to be added to output file name before '.bam'" << std::endl;
     std::cout << "  -p3                       require 3' C->T differences at the indicated positions (e.g. 0,-1,-2)" << std::endl;
     std::cout << "  -p5                       require 5' C->T differences at the indicated positions (e.g. 0,1,2)" << std::endl;
+    std::cout << "  -ds                       double stranded library (require 5' C->T and 3' G->A)" << std::endl;
     std::cout << "  -h                        display this help message" << std::endl;
 }
 
@@ -34,6 +35,7 @@ int main(int argc, char *argv[])
     std::string suffix = "";
     std::vector<int16_t> p3;
     std::vector<int16_t> p5;
+    bool double_stranded = false;
 
     std::ostringstream command_line;
     for (int i = 0; i < argc; i++)
@@ -87,6 +89,10 @@ int main(int argc, char *argv[])
             {
                 p5.push_back(std::stoi(p5_arg));
             }
+        }
+        if (std::string(argv[i]) == "-ds")
+        {
+            double_stranded = true;
         }
         if ((std::string(argv[i]) == "-h") || (argc == 1))
         {
@@ -148,15 +154,20 @@ int main(int argc, char *argv[])
             {
                 continue;
             }
-            bool is_reverse = alignment->core.flag & BAM_FREVERSE;
 
             std::string reconstructed_alignment = reconstruct_alignment(alignment);
             std::string reconstructed_reference = reconstruct_reference(alignment, reconstructed_alignment);
 
+            bool is_reverse = alignment->core.flag & BAM_FREVERSE;
+            if (is_reverse)
+            {
+                reconstructed_alignment = reverse_complement(reconstructed_alignment);
+                reconstructed_reference = reverse_complement(reconstructed_reference);
+            }
+
             // Check for deamination at ends
             std::string alignment_ends;
             std::string reference_ends;
-
             for (auto p5_val : p5)
             {
                 alignment_ends += reconstructed_alignment[p5_val];
@@ -170,8 +181,18 @@ int main(int argc, char *argv[])
 
             for (size_t i = 0; i < alignment_ends.size(); i++)
             {
-                if ((reference_ends[i] == 'C' && alignment_ends[i] == 'T' && !is_reverse) ||
-                    (reference_ends[i] == 'G' && alignment_ends[i] == 'A' && is_reverse))
+                if (!double_stranded && reference_ends[i] == 'C' && alignment_ends[i] == 'T')
+                {
+                    deaminated_reads++;
+
+                    bam1_t *new_alignment = bam_init1();
+                    bam_copy1(new_alignment, alignment);
+                    alignment_buffer.push_back(new_alignment);
+                    break;
+                }
+                else if (double_stranded &&
+                       ((reference_ends[i] == 'G' && alignment_ends[i] == 'A' && i >= p5.size()) ||
+                        (reference_ends[i] == 'C' && alignment_ends[i] == 'T' && i < p5.size())))
                 {
                     deaminated_reads++;
 

@@ -107,8 +107,9 @@ Filter BAM files based on deamination patterns at specific positions.
 Options:
 - `-out_folder <output_path>`: Output folder (default: current directory)
 - `-suffix <string>`: String to add to output filename
-- `-p3`: 3' C→T differences at specified positions (e.g., 0,-1,-2)
-- `-p5`: 5' C→T differences at specified positions (e.g., 0,1,2)
+- `-p3 <positions>`: 3' C→T differences at specified positions (e.g., 0,-1,-2)
+- `-p5 <positions>`: 5' C→T differences at specified positions (e.g., 0,1,2)
+- `-ds`: Double-stranded library (require 5' C→T and 3' G→A)
 - `-h`: Display help message
 
 ### deamBAM
